@@ -1,0 +1,152 @@
+# CDP Analysis - Subtask 0-1-2: Theme tokens and neon-blue styling
+# Analyst: Tara
+# Date: 2025-12-16
+# Task Status: Pre-Test Analysis
+
+## A. Atomic Actions
+
+### Action 1: Verify neon-blue styling application
+- **Behavior**: Check that specific UI elements have theme indicator classes
+- **Real outcome**: Elements visually appear with neon blue accent color (manual verification)
+- **Observable outcome**: Presence of CSS classes or data attributes
+- **Risk level**: Low
+
+### Action 2: Verify theme configuration extraction
+- **Behavior**: Theme colors defined in maintainable location (Tailwind config or CSS variables)
+- **Real outcome**: Centralized theme definition for consistency
+- **Observable outcome**: Existence of theme configuration in build system
+- **Risk level**: Medium (affects maintainability)
+
+## B. Resources Touched
+
+### Resource 1: Frontend component (App.vue)
+- **Type**: Vue component file
+- **Access**: Read-only for testing
+- **Isolation risks**: Component may change structure during implementation
+
+### Resource 2: CSS/Tailwind configuration
+- **Type**: Build configuration
+- **Access**: Read for theme definitions
+- **Isolation risks**: Configuration may not exist yet
+
+### Resource 3: Test infrastructure (Vitest + Vue Test Utils)
+- **Type**: Testing framework
+- **Access**: Component mounting and DOM inspection
+- **Isolation risks**: Vitest configuration issues with Vue SFCs (known issue from 0-1-1)
+
+## C. System Physics
+
+### Constraint 1: CSS class name coupling
+- **Physical limit**: Tests coupled to specific class names that may change
+- **Failure mode**: Refactoring class names breaks tests
+- **Mitigation**: Use data attributes for stable selectors
+
+### Constraint 2: Visual vs structural testing
+- **Physical limit**: Cannot test actual visual appearance in unit tests
+- **Failure mode**: Tests pass but visual appearance incorrect
+- **Mitigation**: Manual verification required for MVP
+
+### Constraint 3: Partial implementation from 0-1-1
+- **Physical limit**: Theme already partially implemented
+- **Failure mode**: Tests may pass immediately without new implementation
+- **Mitigation**: Focus on validation and refinement aspects
+
+## D. Test-Seam Validation
+
+### Seam 1: CSS class application
+- **Testability**: High - can query DOM for class names
+- **Observability**: Direct DOM inspection possible
+- **Risk**: None
+
+### Seam 2: Theme configuration
+- **Testability**: Medium - can check for configuration file existence
+- **Observability**: File system access required
+- **Risk**: Testing build configuration is atypical for unit tests
+
+## E. Anti-Placeholder Analysis
+
+### Current State Analysis:
+- Theme styling partially implemented in App.vue (CSS classes present)
+- CSS classes: `.text-neon-blue`, `.border-neon-blue`, `.bg-neon-blue`
+- Classes applied to required elements: headings, project selector, AI text, Send button
+- User messages have `bg-gray-700` class
+
+### Placeholder Risk Assessment:
+- **Risk 1**: Tests could pass with current implementation (not a placeholder)
+- **Risk 2**: Missing Tailwind configuration extraction could go undetected
+- **Risk 3**: Visual appearance not testable in unit tests
+
+### Mitigation Strategy:
+1. Add data attributes for stable testing selectors
+2. Test for Tailwind config extraction (if feasible)
+3. Accept manual verification for visual aspects (per Option A)
+
+## F. Security Analysis
+
+### Security Risk: None identified
+- Theme styling is presentation layer only
+- No user input or data processing involved
+- No external dependencies
+
+## G. Test Scenario Derivation
+
+### Scenario 1: Theme class application validation
+- **Priority**: Critical
+- **Test type**: Unit test (structural)
+- **Description**: Verify required elements have theme indicator classes
+- **Placeholder detection**: Would fail if classes removed
+
+### Scenario 2: User message background validation  
+- **Priority**: Critical
+- **Test type**: Unit test (structural)
+- **Description**: Verify user messages have grey background class
+- **Placeholder detection**: Would fail if class changed
+
+### Scenario 3: Theme configuration validation
+- **Priority**: Medium
+- **Test type**: Integration test (file system)
+- **Description**: Check for theme configuration in maintainable location
+- **Placeholder detection**: Would fail if configuration missing
+
+## H. Clarification Needed
+
+### Question 1: Tailwind configuration testing
+- **Issue**: Testing build configuration atypical for unit tests
+- **Proposed solution**: Skip configuration testing, rely on manual review
+- **Impact if unanswered**: Potential inconsistency in theme definition
+- **Documentation**: Will proceed with structural tests only
+
+### Question 2: TDD compliance with partial implementation
+- **Issue**: Tests may pass immediately due to existing implementation
+- **Proposed solution**: Write validation tests that should already pass
+- **Impact if unanswered**: Deviates from strict TDD but appropriate for refinement task
+- **Documentation**: Acknowledged as special case due to task sequencing
+
+## I. Blocking Assessment
+
+### Blocking Status: NOT BLOCKED
+- Clear test seams exist (DOM structure)
+- Observable outcomes defined (CSS class presence)
+- Placeholder detection possible (remove classes to fail tests)
+- No architectural ambiguities
+
+### Rationale:
+Tests can be written to validate current implementation and would fail if theme classes were removed. This satisfies the anti-placeholder rule.
+
+## J. Test Implementation Strategy
+
+1. **Test approach**: Structural validation (Option A)
+2. **Selectors**: Use combination of `data-testid` and CSS class queries
+3. **Assertions**: Check for presence of theme indicator classes
+4. **Scope**: Four required elements + user message background
+5. **Non-goals**: Exact color values, pixel measurements
+
+## K. Risk Acceptance
+
+### Accepted Risks:
+1. Visual appearance requires manual verification
+2. Tailwind configuration not automatically tested
+3. TDD red stage may not be strictly followed due to existing implementation
+
+### Justification:
+Per MVP constraints and Option A testing approach, these risks are acceptable for Feature 0.

@@ -1,0 +1,21 @@
+{
+  "name": "cm-team",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "dev": "concurrently -n backend,frontend -c green,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev -- --host\"",
+    "start": "concurrently -n backend,frontend -c green,cyan \"npm --prefix backend run start\" \"npm --prefix frontend run dev -- --host\""
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.3",
+    "concurrently": "^9.2.0",
+    "supertest": "^7.1.4",
+    "vue": "^3.5.24"
+  },
+  "dependencies": {
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^27.3.0",
+    "vitest": "^4.0.16"
+  }
+}

@@ -48,7 +48,7 @@
         <div v-if="activeTab === 0">Basic Info Placeholder</div>
         <div v-else-if="activeTab === 1">Instruction Placeholder</div>
         <div v-else-if="activeTab === 2">Activity Log Placeholder</div>
-        <div v-else-if="activeTab === 3">CDP Analysis Placeholder</div>
+        <div v-else-if="activeTab === 3">PCC Placeholder</div>
         <div v-else-if="activeTab === 4">Tests Placeholder</div>
         <div v-else-if="activeTab === 5">Implementations Placeholder</div>
         <div v-else-if="activeTab === 6">Review Placeholder</div>
@@ -84,7 +84,7 @@ const tabs = [
   'Basic Info',
   'Instruction',
   'Activity Log',
-  'CDP Analysis',
+  'PCC',
   'Tests',
   'Implementations',
   'Review'

@@ -95,6 +95,7 @@
             <EntityModal
               v-if="entityModalState.visible"
               :visible="entityModalState.visible"
+              :entityType="entityModalState.type"
               @close="closeEntityModal"
             >
               <template #modal-heading>
@@ -115,23 +116,32 @@
               <template #activity-log>
                 Activity Log Placeholder
               </template>
-              <template #pvp-full>
-                PVP Full Analysis Placeholder
+              <template #cap-full>
+                CAP Full Analysis Placeholder
               </template>
-              <template #pvp-risks>
-                PVP Risks/Gaps Placeholder
+              <template #cap-risks>
+                CAP Risks/Gaps Placeholder
               </template>
-              <template #pvp-clarifications>
-                PVP Clarifications Placeholder
+              <template #cap-clarifications>
+                CAP Clarifications Placeholder
               </template>
-              <template #cdp-full>
-                CDP Full Analysis Placeholder
+              <template #pcc-full>
+                PCC Full Analysis Placeholder
               </template>
-              <template #cdp-risks>
-                CDP Risks/Gaps Placeholder
+              <template #pcc-risks>
+                PCC Risks/Gaps Placeholder
               </template>
-              <template #cdp-clarifications>
-                CDP Clarifications Placeholder
+              <template #pcc-clarifications>
+                PCC Clarifications Placeholder
+              </template>
+              <template #red-full>
+                RED Full Analysis Placeholder
+              </template>
+              <template #red-risks>
+                RED Risks/Gaps Placeholder
+              </template>
+              <template #red-clarifications>
+                RED Clarifications Placeholder
               </template>
             </EntityModal>
     

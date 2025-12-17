@@ -53,35 +53,54 @@
         </div>
         <div v-else-if="activeTab === 2">
           <div>
-            <div class="font-bold text-neon-blue mb-2">PVP Analysis</div>
+            <div class="font-bold text-neon-blue mb-2">PCC (Preflight Constraint Check)</div>
             <details>
-              <summary class="cursor-pointer text-gray-200">Full PVP Analysis (click to expand/collapse)</summary>
+              <summary class="cursor-pointer text-gray-200">Full PCC Analysis (click to expand/collapse)</summary>
               <div class="mt-2">
-                <slot name="pvp-full">PVP Full Analysis Placeholder</slot>
+                <slot name="pcc-full">PCC Full Analysis Placeholder</slot>
               </div>
             </details>
             <div class="mt-4">
               <div class="font-bold text-gray-300">Risks / Gaps & Recommendations</div>
-              <slot name="pvp-risks">PVP Risks/Gaps Placeholder</slot>
+              <slot name="pcc-risks">PCC Risks/Gaps Placeholder</slot>
               <div class="font-bold text-gray-300 mt-2">Clarifications Needed</div>
-              <slot name="pvp-clarifications">PVP Clarifications Placeholder</slot>
+              <slot name="pcc-clarifications">PCC Clarifications Placeholder</slot>
             </div>
           </div>
         </div>
-        <div v-else-if="activeTab === 3">
+        <!-- RED tab (only for features) -->
+        <div v-else-if="props.entityType === 'feature' && activeTab === 3">
           <div>
-            <div class="font-bold text-neon-blue mb-2">CDP Analysis</div>
+            <div class="font-bold text-neon-blue mb-2">RED (Recursive Execution Decomposition)</div>
             <details>
-              <summary class="cursor-pointer text-gray-200">Full CDP Analysis (click to expand/collapse)</summary>
+              <summary class="cursor-pointer text-gray-200">Full RED Analysis (click to expand/collapse)</summary>
               <div class="mt-2">
-                <slot name="cdp-full">CDP Full Analysis Placeholder</slot>
+                <slot name="red-full">RED Full Analysis Placeholder</slot>
               </div>
             </details>
             <div class="mt-4">
               <div class="font-bold text-gray-300">Risks / Gaps & Recommendations</div>
-              <slot name="cdp-risks">CDP Risks/Gaps Placeholder</slot>
+              <slot name="red-risks">RED Risks/Gaps Placeholder</slot>
               <div class="font-bold text-gray-300 mt-2">Clarifications Needed</div>
-              <slot name="cdp-clarifications">CDP Clarifications Placeholder</slot>
+              <slot name="red-clarifications">RED Clarifications Placeholder</slot>
+            </div>
+          </div>
+        </div>
+        <!-- CAP tab (index depends on entity type) -->
+        <div v-else-if="(props.entityType === 'feature' && activeTab === 4) || (props.entityType === 'task' && activeTab === 3)">
+          <div>
+            <div class="font-bold text-neon-blue mb-2">CAP (Constraint-Aware Planning)</div>
+            <details>
+              <summary class="cursor-pointer text-gray-200">Full CAP Analysis (click to expand/collapse)</summary>
+              <div class="mt-2">
+                <slot name="cap-full">CAP Full Analysis Placeholder</slot>
+              </div>
+            </details>
+            <div class="mt-4">
+              <div class="font-bold text-gray-300">Risks / Gaps & Recommendations</div>
+              <slot name="cap-risks">CAP Risks/Gaps Placeholder</slot>
+              <div class="font-bold text-gray-300 mt-2">Clarifications Needed</div>
+              <slot name="cap-clarifications">CAP Clarifications Placeholder</slot>
             </div>
           </div>
         </div>
@@ -101,11 +120,12 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import MessageInput from './MessageInput.vue'
 
 const props = defineProps({
-  visible: { type: Boolean, required: true }
+  visible: { type: Boolean, required: true },
+  entityType: { type: String, default: 'feature' } // 'feature' or 'task'
 })
 const emit = defineEmits(['close'])
 
@@ -113,12 +133,17 @@ function close() {
   emit('close')
 }
 
-const tabs = [
-  'Basic Info',
-  'Activity Log',
-  'PVP Analysis',
-  'CDP Analysis'
-]
+// Dynamic tabs based on entity type
+const tabs = computed(() => {
+  const baseTabs = ['Basic Info', 'Activity Log', 'PCC']
+  if (props.entityType === 'feature') {
+    return [...baseTabs, 'RED', 'CAP']
+  } else {
+    // task - no RED tab
+    return [...baseTabs, 'CAP']
+  }
+})
+
 const activeTab = ref(0)
 
 const handleSendMessage = (messageText) => {

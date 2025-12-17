@@ -61,6 +61,7 @@ When asked to create detailed specs:
 3. **Acceptance Criteria:** Testable conditions for "done"
 4. **Edge Cases:** Error handling, validation
 5. **Dependencies:** What this relies on
+6. **Decisions Locked:** (Mandatory) Explicit decisions locked from PVP/CDP findings
 
 ## TDD Awareness
 
@@ -153,4 +154,3 @@ Key things to include:
 
 
 ---
-

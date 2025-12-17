@@ -42,7 +42,9 @@ resource_physics:
 
 ## Usage Guidelines
 
-- **When to use**: During the planning phase, specifically in PVP step 3 (IDENTIFY GAPS).
+- **When to use**:
+  - **Subtasks (Tara/Devon):** Use **CDP Level 1** (Atomic Actions + Resources). Focus on immediate constraints.
+  - **Features/Architecture (Adam):** Use **CDP Level 3** (Full Gap Analysis). Focus on systemic risk.
 - **Focus**: Accuracy and thoroughness. Ignore security considerations unless they are inherent to the resource constraints.
 - **Output**: A clear list of gaps, constraints, and risks that must be addressed in the plan.
 

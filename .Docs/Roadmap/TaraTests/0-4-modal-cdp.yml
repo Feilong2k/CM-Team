@@ -1,0 +1,83 @@
+# CDP Analysis for Task 0-4: Subtask Modal (Tabs + Message Entry)
+# Author: Tara
+
+subtasks:
+  0-4-1:
+    title: Modal open/close on subtask click
+    atomicActions:
+      - Click a subtask row
+      - Modal appears
+      - Click close button or press ESC
+      - Modal disappears
+    resourcesTouched:
+      - UI state (modal visibility)
+      - Subtask data (for modal content)
+    systemPhysics:
+      - Modal must overlay and trap focus
+      - Modal must be dismissible by UI and keyboard
+      - Risk: Modal state leaks, cannot be closed, or is not accessible
+    testSeams:
+      - Subtask row emits event to open modal
+      - Modal component exposes open/close state
+      - Modal close event is observable
+    risks:
+      - Modal can be left open if close event is not handled
+      - Modal may not trap focus (accessibility)
+      - Placeholder modal could pass test if not asserting on actual UI state
+    blockers: []
+    testScenarios:
+      - Simulate subtask click, assert modal appears
+      - Simulate close, assert modal disappears
+      - Assert modal cannot be opened by non-subtask actions
+
+  0-4-2:
+    title: Modal tabs layout (placeholders acceptable)
+    atomicActions:
+      - Modal renders with 7 tab labels
+      - Click each tab, content area switches
+    resourcesTouched:
+      - Modal component state (active tab)
+      - Tab content (from subtask JSON)
+    systemPhysics:
+      - Tab switching must be observable in DOM
+      - Risk: Tabs are static, not interactive
+    testSeams:
+      - Modal exposes active tab state
+      - Tab click events are observable
+    risks:
+      - Placeholder tab content could pass test if not asserting on tab switching
+    blockers: []
+    testScenarios:
+      - Assert all 7 tab labels exist
+      - Simulate tab clicks, assert active tab changes
+      - Assert correct content area is shown for each tab
+
+  0-4-3:
+    title: Modal message entry (same rules as chat)
+    atomicActions:
+      - Type in modal message input
+      - Enter sends, Shift+Enter inserts newline, max 3 lines
+    resourcesTouched:
+      - Modal message input state
+      - Message log (activityLog in JSON)
+    systemPhysics:
+      - Input must clamp to 3 lines
+      - Message send event is observable
+      - Risk: Placeholder input could pass test if not asserting on message log update
+    testSeams:
+      - Modal exposes message input state
+      - Message send event is observable
+      - Activity log is updated on send
+    risks:
+      - Input does not clamp to 3 lines
+      - Message is not added to activity log
+    blockers: []
+    testScenarios:
+      - Simulate typing and sending message, assert activity log updates
+      - Simulate Shift+Enter, assert newline is inserted
+      - Assert input does not exceed 3 lines
+
+meta:
+  created: 2025-12-16T22:23:50-05:00
+  ssot: .Docs/Roadmap/Feature0_Implementation_Requirements_v1.0.md
+  author: Tara

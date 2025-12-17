@@ -1,0 +1,218 @@
+{
+  "features": [
+    {
+      "id": "F-000",
+      "title": "Feature 0: Modal Design",
+      "status": "pending",
+      "expanded": true,
+      "tasks": [
+        {
+          "id": "0-1",
+          "title": "Task 0-1: Global Layout + Styling Tokens",
+          "status": "pending",
+          "expanded": true,
+          "subtasks": [
+            {
+              "id": "0-1-1",
+              "title": "Subtask 0-1-1: Split-screen layout scaffold",
+              "status": "pending",
+              "expanded": false
+            },
+            {
+              "id": "0-1-2",
+              "title": "Subtask 0-1-2: Theme tokens and neon-blue styling",
+              "status": "pending",
+              "expanded": false
+            }
+          ]
+        },
+        {
+          "id": "0-2",
+          "title": "Task 0-2: Left Panel (Chat Terminal UI)",
+          "status": "pending",
+          "expanded": false,
+          "subtasks": [
+            {
+              "id": "0-2-1",
+              "title": "Subtask 0-2-1: Chat message list rendering (no bubbles)",
+              "status": "pending",
+              "expanded": false
+            },
+            {
+              "id": "0-2-2",
+              "title": "Subtask 0-2-2: Markdown rendering for AI messages",
+              "status": "pending",
+              "expanded": false
+            },
+            {
+              "id": "0-2-3",
+              "title": "Subtask 0-2-3: Chat input behavior (Enter vs Shift+Enter, max 3 lines)",
+              "status": "pending",
+              "expanded": false
+            }
+          ]
+        },
+        {
+          "id": "0-3",
+          "title": "Task 0-3: Right Panel (Workflow Console Tree)",
+          "status": "pending",
+          "expanded": false,
+          "subtasks": [
+            {
+              "id": "0-3-1",
+              "title": "Subtask 0-3-1: Project header + selector placement",
+              "status": "pending",
+              "expanded": false
+            },
+            {
+              "id": "0-3-2",
+              "title": "Subtask 0-3-2: Collapsible tree for Features → Tasks → Subtasks with IDs",
+              "status": "pending",
+              "expanded": false
+            },
+            {
+              "id": "0-3-3",
+              "title": "Subtask 0-3-3: Status dropdown per item (feature/task/subtask)",
+              "status": "pending",
+              "expanded": false
+            }
+          ]
+        },
+        {
+          "id": "0-4",
+          "title": "Task 0-4: Subtask Modal (Tabs + Message Entry)",
+          "status": "pending",
+          "expanded": false,
+          "subtasks": [
+            {
+              "id": "0-4-1",
+              "title": "Subtask 0-4-1: Modal open/close on subtask click",
+              "status": "pending",
+              "expanded": false,
+              "basicInfo": {
+                "workflowStage": "",
+                "status": "pending",
+                "description": "",
+                "steps": [],
+                "dependencies": []
+              },
+              "instruction": {
+                "tara": "",
+                "taraExamples": [],
+                "devon": "",
+                "acceptanceCriteria": ""
+              },
+              "activityLog": [],
+              "cdpAnalysis": {
+                "orion": "",
+                "tara": "",
+                "devon": "",
+                "gaps": "",
+                "mitigation": "",
+                "findings": ""
+              },
+              "tests": {
+                "written": [],
+                "expectedResults": []
+              },
+              "implementations": {
+                "filesChanged": [],
+                "featuresImplemented": [],
+                "refactorSteps": []
+              },
+              "review": {
+                "untested": "",
+                "shortcomings": "",
+                "recommendations": ""
+              }
+            },
+            {
+              "id": "0-4-2",
+              "title": "Subtask 0-4-2: Modal tabs layout (placeholders acceptable)",
+              "status": "pending",
+              "expanded": false,
+              "basicInfo": {
+                "workflowStage": "",
+                "status": "pending",
+                "description": "",
+                "steps": [],
+                "dependencies": []
+              },
+              "instruction": {
+                "tara": "",
+                "taraExamples": [],
+                "devon": "",
+                "acceptanceCriteria": ""
+              },
+              "activityLog": [],
+              "cdpAnalysis": {
+                "orion": "",
+                "tara": "",
+                "devon": "",
+                "gaps": "",
+                "mitigation": "",
+                "findings": ""
+              },
+              "tests": {
+                "written": [],
+                "expectedResults": []
+              },
+              "implementations": {
+                "filesChanged": [],
+                "featuresImplemented": [],
+                "refactorSteps": []
+              },
+              "review": {
+                "untested": "",
+                "shortcomings": "",
+                "recommendations": ""
+              }
+            },
+            {
+              "id": "0-4-3",
+              "title": "Subtask 0-4-3: Modal message entry (same rules as chat)",
+              "status": "pending",
+              "expanded": false,
+              "basicInfo": {
+                "workflowStage": "",
+                "status": "pending",
+                "description": "",
+                "steps": [],
+                "dependencies": []
+              },
+              "instruction": {
+                "tara": "",
+                "taraExamples": [],
+                "devon": "",
+                "acceptanceCriteria": ""
+              },
+              "activityLog": [],
+              "cdpAnalysis": {
+                "orion": "",
+                "tara": "",
+                "devon": "",
+                "gaps": "",
+                "mitigation": "",
+                "findings": ""
+              },
+              "tests": {
+                "written": [],
+                "expectedResults": []
+              },
+              "implementations": {
+                "filesChanged": [],
+                "featuresImplemented": [],
+                "refactorSteps": []
+              },
+              "review": {
+                "untested": "",
+                "shortcomings": "",
+                "recommendations": ""
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

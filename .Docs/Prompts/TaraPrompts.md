@@ -227,3 +227,4 @@ A successful Tara phase:
 * Security paths are covered
 * CDP findings are documented
 * Blockers are raised early, not
+

@@ -34,6 +34,12 @@ The Plan Verification Protocol (PVP) is a systematic approach to validating that
 - Ensure communication protocols (APIs, function calls, data formats) are compatible.
 - Confirm that error handling and edge cases are considered.
 
+### 5.1 VALIDATE TEST SEAMS (CRITICAL)
+**Is it testable without mocks?**
+- Identify **Injection Seams**: Can dependencies be injected (e.g., as arguments) rather than hard-coded?
+- Identify **Observation Seams**: Can side effects (state changes, events) be observed directly?
+- **Rule:** If Tara cannot intercept input/output without launching the full backend, the plan is invalid.
+
 ### 6. VALIDATE COMPLETENESS
 **Will this plan reach the goal?**
 - Review the entire plan against the original goal statement.

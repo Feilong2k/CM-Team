@@ -23,12 +23,12 @@ Orion maintains a **Step Queue** for each Subtask.
 *   **FAILED:** Worker returned `failure`. Logic needs fixing.
 
 ### Execution Logic
-1.  Orion generates all steps for a subtask upfront (e.g., "Step 1: Write Test", "Step 2: Implement Component").
-2.  Orion pops the first PENDING step.
-3.  Orion gathers context (using tools) relevant to that step.
+1.  Orion generates all steps for a subtask upfront and **stores them in the DB** (e.g., `task_steps` table).
+2.  Orion queries the DB for the next `PENDING` step.
+3.  **Context Gathering:** Orion queries the DB for **CDP Resources** linked to this task/subtask to determine which files to load.
 4.  Orion constructs a **Focused Prompt** for the Worker.
-5.  Worker executes and returns a **Structured JSON Reply**.
-6.  Orion updates the Queue:
+5.  Worker executes and calls the **Completion Tool** (`submit_step_completion`).
+6.  Orion (via DB updates) observes the Queue state change:
     *   If `success`: Mark COMPLETED, pop next PENDING step.
     *   If `failure`: Mark FAILED, keep step in queue, request fix from Worker.
     *   If `blocked`: Mark BLOCKED, Orion investigates or asks User.
@@ -56,61 +56,43 @@ CONSTRAINTS:
 - [No Placeholders]
 
 OUTPUT REQUIREMENT:
-You must reply with a valid JSON block inside ```json``` tags.
+You must Call the Tool `submit_step_completion` with your JSON result. Do NOT output the JSON in text.
 ```
 
 ---
 
-## 3. Structured Reply Schema (Worker -> Orion)
+## 3. Tool Definition: `submit_step_completion`
 
-Workers **MUST** return this JSON structure at the end of their response.
+Workers **MUST** use this tool to report status. This tool writes directly to the Database.
 
-### JSON Schema
+### Schema (JSON)
 
 ```json
 {
-  "task_id": "String (e.g., '0-4-1')",
-  "step_index": "Number (e.g., 1)",
-  "agent": "String ('Tara' or 'Devon')",
-  "status": "String ('success', 'failure', 'blocked')",
-  "artifacts": [
-    "Array of Strings (File paths created/modified)"
-  ],
-  "summary": "String (Brief description of what was done)",
-  "context_for_next_step": "String (Crucial info for the next agent, e.g., 'Modal is empty')",
-  "blockers": [
-    "Array of Strings (Description of what is blocking progress)"
-  ]
-}
-```
-
-### Examples
-
-**Tara Success:**
-```json
-{
-  "task_id": "0-4-1",
-  "step_index": 1,
-  "agent": "Tara",
-  "status": "success",
-  "artifacts": ["frontend/src/components/SubtaskModal.spec.js"],
-  "summary": "Created failing test for modal open/close behavior.",
-  "context_for_next_step": "Tests expect 'data-testid=subtask-modal' to exist.",
-  "blockers": []
-}
-```
-
-**Devon Blocked:**
-```json
-{
-  "task_id": "0-4-1",
-  "step_index": 2,
-  "agent": "Devon",
-  "status": "blocked",
-  "artifacts": [],
-  "summary": "Attempted to import Modal but file is missing.",
-  "context_for_next_step": "",
-  "blockers": ["Cannot find 'EntityModal.vue' in components folder."]
+  "name": "submit_step_completion",
+  "description": "Submits the result of the assigned step. Updates the DB task_steps table.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "task_id": { "type": "string", "description": "e.g., '0-4-1'" },
+      "step_index": { "type": "number", "description": "e.g., 1" },
+      "agent": { "type": "string", "enum": ["Tara", "Devon"] },
+      "status": { "type": "string", "enum": ["success", "failure", "blocked"] },
+      "artifacts": { 
+        "type": "array", 
+        "items": { "type": "string" },
+        "description": "List of files created or modified"
+      },
+      "summary": { "type": "string", "description": "Brief description of what was done" },
+      "context_for_next_step": { "type": "string", "description": "Info for the next agent" },
+      "blockers": { 
+        "type": "array", 
+        "items": { "type": "string" },
+        "description": "Reasons for being blocked"
+      }
+    },
+    "required": ["task_id", "step_index", "agent", "status"]
+  }
 }
 ```
 

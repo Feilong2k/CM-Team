@@ -15,5 +15,12 @@ export default defineConfig({
   server: {
     port: parseInt(process.env.VITE_PORT) || 6100,
     strictPort: false, // Allow port to be changed if busy
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3500',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
 })

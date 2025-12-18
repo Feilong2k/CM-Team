@@ -15,16 +15,30 @@
       >
         &times;
       </button>
-      <!-- Heading -->
-      <div class="mb-2">
-        <div class="text-neon-blue text-xl font-bold" data-testid="entity-modal-heading">
-          <slot name="modal-heading">
-            Entity Modal
-          </slot>
+      <!-- Heading with status dropdown -->
+      <div class="mb-2 flex items-center justify-between">
+        <div class="flex-1">
+          <div class="text-neon-blue text-xl font-bold" data-testid="entity-modal-heading">
+            <slot name="modal-heading">
+              Entity Modal
+            </slot>
+          </div>
         </div>
-        <div class="text-gray-200 text-sm mt-1" data-testid="entity-modal-meta">
-          <slot name="modal-meta"></slot>
+        <div v-if="feature || task" class="flex items-center gap-2 ml-4">
+          <label class="text-xs text-gray-400 mr-1">Status:</label>
+          <select
+            class="bg-[#0a0a0a] text-neon-blue border border-[#333333] rounded px-2 py-1 text-xs"
+            :value="feature ? feature.status : (task ? task.status : '')"
+            @change="onStatusDropdownChange($event)"
+          >
+            <option value="pending">pending</option>
+            <option value="in progress">in progress</option>
+            <option value="done">done</option>
+          </select>
         </div>
+      </div>
+      <div class="text-gray-200 text-sm mt-1" data-testid="entity-modal-meta">
+        <slot name="modal-meta"></slot>
       </div>
       <!-- Tabs -->
       <div class="flex border-b border-neon-blue mb-4 mt-2" data-testid="entity-modal-tabs">
@@ -120,17 +134,50 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
 import MessageInput from './MessageInput.vue'
 
 const props = defineProps({
   visible: { type: Boolean, required: true },
-  entityType: { type: String, default: 'feature' } // 'feature' or 'task'
+  entityType: { type: String, default: 'feature' }, // 'feature' or 'task'
+  feature: { type: Object, default: null },
+  task: { type: Object, default: null }
 })
 const emit = defineEmits(['close'])
 
 function close() {
   emit('close')
+}
+
+// Local state for status
+const statusValue = ref(props.feature?.status || props.task?.status || 'pending')
+
+// Watch for prop changes (when opening a new feature/task)
+watch(
+  () => [props.feature, props.task],
+  ([newFeature, newTask]) => {
+    if (newFeature && props.entityType === 'feature') statusValue.value = newFeature.status
+    if (newTask && props.entityType === 'task') statusValue.value = newTask.status
+  }
+)
+
+function onStatusDropdownChange(event) {
+  const newStatus = event.target.value;
+  if (props.feature) {
+    fetch(`/api/features/${props.feature.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    }).catch(err => console.error('Failed to update feature status:', err));
+    props.feature.status = newStatus;
+  } else if (props.task) {
+    fetch(`/api/features/${props.task.feature_id}/tasks/${props.task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    }).catch(err => console.error('Failed to update task status:', err));
+    props.task.status = newStatus;
+  }
 }
 
 // Dynamic tabs based on entity type
@@ -146,12 +193,31 @@ const tabs = computed(() => {
 
 const activeTab = ref(0)
 
-const handleSendMessage = (messageText) => {
-  // For now, just log to console. In a real app, this would update the activity log.
-  // You can extend this to emit an event or update a prop as needed.
-  // Example: emit('add-activity-log', messageText)
-  // For demo:
-  console.log('Entity modal message sent:', messageText)
+const handleSendMessage = async (messageText) => {
+  if (!messageText) return;
+  const sender = "You";
+  const timestamp = new Date().toISOString();
+  try {
+    if (props.entityType === 'feature' && props.feature) {
+      await fetch(`/api/features/${props.feature.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activity_log_entry: { message: messageText, timestamp, sender } })
+      });
+      if (!props.feature.activity_log) props.feature.activity_log = [];
+      props.feature.activity_log.push({ message: messageText, timestamp, sender });
+    } else if (props.entityType === 'task' && props.task) {
+      await fetch(`/api/features/${props.task.feature_id}/tasks/${props.task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activity_log_entry: { message: messageText, timestamp, sender } })
+      });
+      if (!props.task.activity_log) props.task.activity_log = [];
+      props.task.activity_log.push({ message: messageText, timestamp, sender });
+    }
+  } catch (err) {
+    console.error('Failed to append to activity_log:', err);
+  }
 }
 
 // Trap focus for accessibility

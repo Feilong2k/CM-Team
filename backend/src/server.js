@@ -36,6 +36,10 @@ app.get('/health', (req, res) => {
   res.json({ ok: true })
 })
 
+// Register features API route
+const featuresRouter = require('./routes/features')
+app.use('/api/features', featuresRouter)
+
 // Export the app for testing
 module.exports = app
 

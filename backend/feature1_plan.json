@@ -1,0 +1,189 @@
+{
+  "schemaVersion": "1.1",
+  "plan": {
+    "externalId": "P1",
+    "projectId": "CM-TEAM",
+    "title": "Feature 1 — Implementation Requirements",
+    "type": "implementation_requirements",
+    "status": "pending",
+    "revision": 1,
+    "features": [
+      {
+        "externalId": "P1-F1",
+        "title": "Feature 1 — Implementation Requirements",
+        "status": "pending",
+        "basic_info": { "owner": "Adam", "description": "Orion Foundation (DB Schema, Import Tools, UI-DB Integration)" },
+        "activity_log": [],
+        "pcc": {},
+        "cap": {},
+        "red": {},
+        "tasks": [
+          {
+            "externalId": "P1-F1-T1",
+            "title": "Database Migration Infrastructure",
+            "status": "pending",
+            "basic_info": { "purpose": "Enable safe schema updates" },
+            "activity_log": [],
+            "pcc": {},
+            "cap": {},
+            "subtasks": [
+              {
+                "externalId": "P1-F1-T1-S1",
+                "title": "Create Migration Runner Script",
+                "status": "pending",
+                "basic_info": {
+                  "overview": "A Node.js script scripts/migrate.js that executes .sql files against the DB.",
+                  "tests": [
+                    "Create a test backend/src/scripts/migrate.spec.js.",
+                    "Mock the pg client.",
+                    "Test 1: Should read a dummy SQL file and call client.query.",
+                    "Test 2: Should wrap execution in a transaction (BEGIN/COMMIT/ROLLBACK)."
+                  ],
+                  "implementation": [
+                    "Implement backend/scripts/migrate.js.",
+                    "Use fs to read files from backend/migrations/.",
+                    "Use pg pool to execute them.",
+                    "Ensure Transaction safety."
+                  ],
+                  "acceptance_criteria": [
+                    "Running node scripts/migrate.js executes SQL without errors."
+                  ]
+                }
+              },
+              {
+                "externalId": "P1-F1-T1-S2",
+                "title": "Migration Execution Ownership + Runbook",
+                "status": "pending",
+                "basic_info": {
+                  "overview": "Define the operational workflow for running migrations (dev/test/staging/prod) and assign explicit responsibility (Orion/CI/operator).",
+                  "scope": [
+                    "Who triggers migrations in each environment.",
+                    "When migrations run.",
+                    "Where the target DB comes from.",
+                    "Safety rules."
+                  ],
+                  "tests": [
+                    "Integration test that verifies migration can be run via documented npm scripts.",
+                    "Test that verifies migration fails gracefully when DATABASE_URL is missing."
+                  ],
+                  "implementation": [
+                    "Add npm scripts to backend/package.json: db:migrate (dev), db:migrate:test (CI/test).",
+                    "Document migration execution workflow in backend/README.md or equivalent.",
+                    "Ensure migration runner has clear error messages for missing environment variables."
+                  ],
+                  "acceptance_criteria": [
+                    "SSOT has a 'Migration Execution Workflow' section with explicit owner/trigger per env.",
+                    "package.json scripts exist for dev and test migrations.",
+                    "CI (or Orion's orchestration doc) includes migrate → tests ordering.",
+                    "Migration runner provides clear guidance when DATABASE_URL is missing."
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "externalId": "P1-F1-T2",
+            "title": "Database Schema Setup",
+            "status": "pending",
+            "basic_info": { "purpose": "Create the core tables for the Orion System" },
+            "activity_log": [],
+            "pcc": {},
+            "cap": {},
+            "subtasks": [
+              {
+                "externalId": "P1-F1-T2-S1",
+                "title": "Create Orion Workflow SQL",
+                "status": "pending",
+                "basic_info": {
+                  "overview": "Define the schema in backend/migrations/002_orion_workflow.sql.",
+                  "tests": [
+                    "Integration Test: backend/tests/schema_v2.spec.js.",
+                    "Test 1: Connect to Test DB.",
+                    "Test 2: Run migration.",
+                    "Test 3: Query metadata to verify tables planning_docs, tasks, subtasks, task_steps exist.",
+                    "Test 4: Verify Foreign Key constraints (e.g., tasks links to planning_docs)."
+                  ],
+                  "implementation": [
+                    "Create backend/migrations/002_orion_workflow.sql.",
+                    "Define tables: planning_docs, features, tasks, subtasks, task_steps.",
+                    "All FKs use ON DELETE CASCADE."
+                  ],
+                  "acceptance_criteria": [
+                    "Migration runs successfully. Tables exist with correct relationships."
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "externalId": "P1-F1-T3",
+            "title": "Plan Import Tool",
+            "status": "pending",
+            "basic_info": { "purpose": "Ingest a JSON Plan into the DB" },
+            "activity_log": [],
+            "pcc": {},
+            "cap": {},
+            "subtasks": [
+              {
+                "externalId": "P1-F1-T3-S1",
+                "title": "Define JSON Plan Schema & Import Logic",
+                "status": "pending",
+                "basic_info": {
+                  "overview": "Create a utility that imports a structured JSON Plan into the DB. This is the Primary Import Method to ensure data fidelity.",
+                  "tests": [
+                    "Unit Test: backend/src/utils/jsonImporter.spec.js.",
+                    "Test 1: Input JSON with nested features, tasks, subtasks (including rich fields like cdp_analysis).",
+                    "Output Assertion: DB rows created with correct JSONB data."
+                  ],
+                  "implementation": [
+                    "Install zod for validation.",
+                    "Implement backend/src/utils/jsonImporter.js.",
+                    "Validate incoming JSON against a Zod schema.",
+                    "Recursive insert of Features -> Tasks -> Subtasks.",
+                    "Ensure all JSONB fields (basic_info, cdp_analysis) are mapped correctly."
+                  ]
+                }
+              },
+              {
+                "externalId": "P1-F1-T3-S2",
+                "title": "CLI Import Tool (JSON-only)",
+                "status": "pending",
+                "basic_info": {
+                  "overview": "A script that accepts .json files.",
+                  "implementation": [
+                    "Create backend/tools/import_plan.js.",
+                    "Accept .json file as input.",
+                    "Import directly (lossless)."
+                  ],
+                  "acceptance_criteria": [
+                    "node tools/import_plan.js plan.json imports rich data."
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "externalId": "P1-F1-T4",
+            "title": "Wire Existing UI to DB",
+            "status": "pending",
+            "basic_info": {
+              "purpose": "Connect the current UI (Features, Tasks, Subtasks, modals) to the backend so it displays live data from the database.",
+              "implementation": [
+                "Expose an API endpoint that returns Features, Tasks, and Subtasks for Feature 1 in the shape the UI expects.",
+                "Update frontend data store/components to fetch from this API instead of static data."
+              ],
+              "acceptance_criteria": [
+                "UI displays Features, Tasks, and Subtasks from the database.",
+                "Modals and navigation work as before, but with live data."
+              ]
+            },
+            "activity_log": [],
+            "pcc": {},
+            "cap": {},
+            "subtasks": []
+          }
+        ]
+      }
+    ]
+  }
+}

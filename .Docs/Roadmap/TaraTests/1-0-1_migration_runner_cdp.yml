@@ -1,0 +1,72 @@
+# Tara CDP Analysis for Subtask 1-0-1
+# Target: Create Migration Runner Script
+# Source: Feature1_Implementation_Requirements_v1.0.md
+
+---
+## 1. Atomic Actions (from spec)
+- Read migration files from `backend/migrations/`
+- Sort files by TIMESTAMP_ prefix
+- Connect to PostgreSQL database
+- Execute SQL files in a transaction (BEGIN/COMMIT/ROLLBACK)
+- Rollback transaction on error
+
+## 2. Resources Touched
+- **File System**: `backend/migrations/` directory (read-only)
+- **Database**: PostgreSQL via `pg` library (read/write)
+- **Environment**: `DATABASE_URL` (required)
+- **Process**: Node.js child process (if CLI) or direct script execution
+
+## 3. System Physics
+- **Concurrency**: Single-threaded migration runner; no concurrent writes expected.
+- **Ordering**: Migration files must be executed in timestamp order.
+- **Partial Failure**: If any SQL file fails, entire transaction must rollback.
+- **Idempotency**: Running migration twice should be safe (CREATE IF NOT EXISTS, etc.)
+- **Network Latency**: DB connection may timeout; need retry/backoff logic.
+- **File I/O**: Directory may be empty; script must handle gracefully.
+
+## 4. Test Seams Validation
+- **File System**: Can be mocked via `fs` module (Node.js).
+- **Database**: `pg` client can be mocked or use test container.
+- **Transaction**: Must verify BEGIN/COMMIT/ROLLBACK calls.
+- **Error Handling**: Must verify rollback on SQL error.
+
+**Seam Status**: ✅ Acceptable. Each layer can be isolated for unit/integration testing.
+
+## 5. Anti-Placeholder Risks
+- **Risk 1**: Script could hardcode success without reading files.
+  - **Mitigation**: Test must verify `fs.readdir` called with correct path.
+- **Risk 2**: Script could skip transaction wrapping.
+  - **Mitigation**: Test must verify `BEGIN` and `COMMIT` calls.
+- **Risk 3**: Script could ignore sorting requirement.
+  - **Mitigation**: Test must verify order of execution matches timestamp order.
+- **Risk 4**: Script could ignore errors and still commit.
+  - **Mitigation**: Test must inject SQL error and verify rollback.
+
+## 6. Security & Edge Cases
+- **SQL Injection**: Not applicable (SQL files are static).
+- **Path Traversal**: Ensure migration path is restricted to `backend/migrations/`.
+- **Missing ENV**: Script must fail gracefully if `DATABASE_URL` missing.
+- **Empty Directory**: Should log warning, not crash.
+- **Invalid SQL**: Must rollback and exit with non-zero code.
+
+## 7. Test Scenarios (Derived)
+### Unit Tests (mocked)
+1. `readMigrationFiles` – returns sorted list of `.sql` files.
+2. `executeMigration` – calls `pg` client with correct SQL.
+3. `runTransaction` – wraps execution in BEGIN/COMMIT.
+4. `handleError` – calls ROLLBACK on SQL error.
+
+### Integration Tests (real DB)
+1. **Happy Path**: Run actual migration file, verify table created.
+2. **Error Path**: Provide invalid SQL, verify rollback and error exit.
+3. **Idempotency**: Run migration twice, verify no duplicate errors.
+4. **Missing ENV**: Unset DATABASE_URL, verify graceful failure.
+
+## 8. Clarification Needed
+- **None**. Spec is clear and test seams exist.
+
+## 9. Blocking Status
+- **Unblocked**. All required seams are present and testable.
+
+---
+## Next Step: Write failing tests in `backend/src/scripts/migrate.spec.js`

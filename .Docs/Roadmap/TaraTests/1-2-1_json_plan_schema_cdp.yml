@@ -1,0 +1,158 @@
+# CDP Analysis: Subtask 1-2-1 — Define JSON Plan Schema & Import Logic
+# Analyst: Tara
+# Date: 2025-12-17
+# Status: RED Phase — Failing Tests Required
+
+## 1. Atomic Actions
+
+### A. Schema Validation
+- **Behavior**: Validate incoming JSON against Zod schema v1.1
+- **Observable Outcome**: Validation passes/fails with specific error messages
+- **Risk Level**: HIGH (invalid data could corrupt DB)
+- **Test Seam**: Zod schema validation function → error messages
+
+### B. Database Insertion (Idempotent Upsert)
+- **Behavior**: Insert/update rows using external_id as unique key
+- **Observable Outcome**: DB rows created/updated with correct data
+- **Risk Level**: HIGH (data loss if upsert fails)
+- **Test Seam**: DB transaction → committed rows
+
+### C. Hierarchical Relationship Building
+- **Behavior**: Parse P1-F1-T1-S1 externalIds to determine parent-child relationships
+- **Observable Outcome**: Correct foreign key assignments in DB
+- **Risk Level**: MEDIUM (incorrect relationships break UI)
+- **Test Seam**: ExternalId parsing → parent_id assignments
+
+### D. Transaction Safety
+- **Behavior**: All inserts in single transaction (all-or-nothing)
+- **Observable Outcome**: Either all rows committed or none (rollback on error)
+- **Risk Level**: HIGH (partial imports corrupt data)
+- **Test Seam**: Transaction BEGIN/COMMIT/ROLLBACK
+
+## 2. Resources Touched
+
+### A. Database (PostgreSQL)
+- **Resource Type**: Relational Database
+- **Access Pattern**: READ (check existing), WRITE (insert/update)
+- **Isolation Risks**: Concurrent imports could conflict on external_id
+- **Mitigation**: Transaction isolation, unique constraints
+
+### B. File System (JSON input)
+- **Resource Type**: File I/O
+- **Access Pattern**: READ (JSON file)
+- **Isolation Risks**: File permissions, encoding issues
+- **Mitigation**: Validate file existence, handle encoding errors
+
+### C. Memory (Zod validation)
+- **Resource Type**: In-memory processing
+- **Access Pattern**: READ/WRITE (parse/validate)
+- **Isolation Risks**: Large JSON files could OOM
+- **Mitigation**: Stream parsing or size limits
+
+## 3. System Physics
+
+### A. Database Constraints
+- **Physical Limits**: Unique constraints on external_id, foreign key constraints
+- **Failure Modes**: Constraint violations, deadlocks
+- **Mitigations**: Proper error handling, retry logic
+
+### B. JSON Parsing
+- **Physical Limits**: Memory for large JSON files
+- **Failure Modes**: Malformed JSON, circular references
+- **Mitigations**: Size validation, safe parsing
+
+### C. Transaction Timing
+- **Physical Limits**: Transaction timeout (default 30s)
+- **Failure Modes**: Long-running imports timeout
+- **Mitigations**: Batch inserts, progress reporting
+
+## 4. Anti-Placeholder Analysis
+
+### 🚫 Invalid Test Patterns (Would Pass with Placeholder)
+1. **Schema Validation**: Test that only checks if function was called (not actual validation)
+2. **DB Insertion**: Test that mocks DB response without verifying real insertion
+3. **Transaction**: Test that doesn't verify rollback on error
+4. **ExternalId Parsing**: Test that accepts any string format
+
+### ✅ Valid Test Patterns (Fail with Placeholder)
+1. **Schema Validation**: Test rejects invalid externalId format (P1-F1-T1-S1 required)
+2. **DB Insertion**: Test verifies actual DB rows after import (not mocked)
+3. **Transaction**: Test verifies rollback when validation fails
+4. **Idempotency**: Test that second import updates (not duplicates) rows
+
+## 5. Test Seam Validation
+
+### ✅ Clear Seams Exist
+- **Input**: JSON file → validated by Zod
+- **Processing**: Validated data → DB transaction
+- **Output**: DB rows with relationships
+
+### 🚨 Potential Blockers
+- **None identified**: Architecture provides clear seams for testing
+
+## 6. Security Analysis
+
+### A. Input Validation
+- **Risk**: JSON injection, malicious nested structures
+- **Mitigation**: Zod schema validation, depth limits
+- **Test Required**: YES (reject malicious structures)
+
+### B. Database Injection
+- **Risk**: SQL injection via JSON values
+- **Mitigation**: Parameterized queries, ORM
+- **Test Required**: YES (verify parameterized queries)
+
+### C. Resource Exhaustion
+- **Risk**: Large JSON files cause OOM
+- **Mitigation**: Size limits, streaming
+- **Test Required**: YES (reject oversized files)
+
+## 7. Test Scenarios (Priority Order)
+
+### CRITICAL (Must Fail with Placeholder)
+1. **C1**: Valid JSON with correct schema passes validation
+2. **C2**: Invalid externalId format (not P1-F1-T1-S1) fails validation
+3. **C3**: Import creates correct DB rows with JSONB data
+4. **C4**: Second import with same externalId updates existing rows (idempotent)
+5. **C5**: Invalid JSON causes transaction rollback (no rows inserted)
+
+### HIGH (Essential Behavior)
+6. **H1**: Hierarchical relationships correctly established (parent_id, feature_id)
+7. **H2**: All JSONB fields preserved (basic_info, pcc, cap, red, etc.)
+8. **H3**: Workflow_stage defaults to 'planning' for subtasks
+9. **H4**: Status normalized to in_progress in DB
+
+### MEDIUM (Edge Cases)
+10. **M1**: Recursive subtasks supported (P1-F1-T1-S1-S1)
+11. **M2**: Missing optional fields handled gracefully
+12. **M3**: Large import (100+ items) completes within timeout
+
+### LOW (Non-critical)
+13. **L1**: Performance benchmark (items/second)
+14. **L2**: Memory usage tracking
+
+## 8. Clarification Requests
+
+### None Required
+- Architecture provides clear test seams
+- Behavior specifications in JSON Plan Schema v1.1 are complete
+- No ambiguous security boundaries
+
+## 9. Blocking Status
+
+### ✅ NOT BLOCKED
+- Tests can be written to fail with placeholders
+- Observable outcomes exist (DB state, validation errors)
+- Clear implementation contract exists
+
+## 10. Next Steps
+
+1. Write failing unit tests for jsonImporter.spec.js
+2. Ensure tests fail with placeholder implementation
+3. Document test failures for Devon
+4. Proceed to Devon's implementation phase
+
+---
+**CDP Analyst Signature**: Tara
+**Date**: 2025-12-17
+**Status**: READY FOR TEST IMPLEMENTATION

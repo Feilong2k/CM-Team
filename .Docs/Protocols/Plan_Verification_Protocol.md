@@ -16,11 +16,13 @@ The Plan Verification Protocol (PVP) is a systematic approach to validating that
 - Identify all resources (tools, APIs, databases, files, environment variables, etc.) needed for each action.
 - Include both existing resources and those that must be created/configured.
 
-### 3. IDENTIFY GAPS
-**What's missing from the plan?**
-- Use the Constraint Discovery Protocol (CDP) to systematically uncover missing elements.
+### 3. IDENTIFY GAPS & MAP DATA FLOW
+**What's missing and how does data move?**
+- **Run CDP (Constraint Discovery Protocol):** Use CDP to map Atomic Actions to Resources. This generates the *detailed* flow.
+- **Create PVP Data Flow Map:** Explicitly map the *high-level* flow (Source -> Transform -> Destination) based on CDP findings.
+- **Identify Gaps:** Check for broken links, missing storage steps, or format mismatches between the steps.
 - Focus on accuracy and thoroughness (ignore security at this stage).
-- **Explicitly map data flows and storage**: Ensure the plan accounts for all data sources, destinations, and transformations. Check for mismatches (e.g., one component writes to a database while another reads from files).
+
 
 ### 4. MAP DEPENDENCIES
 **What builds first?**

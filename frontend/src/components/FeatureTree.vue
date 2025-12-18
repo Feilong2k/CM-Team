@@ -16,10 +16,10 @@
           <button class="text-neon-blue mr-3" @click.stop="toggleFeature(fIdx)">
             {{ feature.expanded ? '▼' : '▶' }}
           </button>
-          <span class="text-neon-blue font-bold text-base">{{ feature.id }}</span>
+          <span class="text-neon-blue font-bold text-base">{{ stripProjectPrefix(feature.external_id || feature.id) }}</span>
           <span class="text-gray-200 ml-3 text-sm">{{ feature.title }}</span>
         </div>
-        <select class="bg-[#0a0a0a] text-neon-blue border border-[#333333] rounded px-3 py-1 text-sm" v-model="feature.status" @click.stop>
+        <select class="bg-[#0a0a0a] text-neon-blue border border-[#333333] rounded px-3 py-1 text-sm" v-model="feature.status" @change="updateFeatureStatus(feature)" @click.stop>
           <option value="pending">pending</option>
           <option value="in progress">in progress</option>
           <option value="done">done</option>
@@ -44,10 +44,10 @@
               <button class="text-neon-blue mr-3" @click.stop="toggleTask(fIdx, tIdx)">
                 {{ task.expanded ? '▼' : '▶' }}
               </button>
-              <span class="text-neon-blue text-sm">{{ task.id }}</span>
+              <span class="text-neon-blue text-sm">{{ stripProjectPrefix(task.external_id || task.id) }}</span>
               <span class="text-gray-200 ml-3 text-sm">{{ task.title }}</span>
             </div>
-            <select class="bg-[#111111] text-neon-blue border border-[#333333] rounded px-2 py-1 text-xs" v-model="task.status" @click.stop>
+            <select class="bg-[#111111] text-neon-blue border border-[#333333] rounded px-2 py-1 text-xs" v-model="task.status" @change="updateTaskStatus(feature, task)" @click.stop>
               <option value="pending">pending</option>
               <option value="in progress">in progress</option>
               <option value="done">done</option>
@@ -65,10 +65,10 @@
               data-testid="subtask-row"
             >
               <div class="flex items-center">
-                <span class="text-neon-blue text-xs">{{ subtask.id }}</span>
+                <span class="text-neon-blue text-xs">{{ stripProjectPrefix(subtask.external_id || subtask.id) }}</span>
                 <span class="text-gray-200 ml-3 text-xs">{{ subtask.title }}</span>
               </div>
-              <select class="bg-[#0a0a0a] text-neon-blue border border-[#333333] rounded px-2 py-1 text-xs" v-model="subtask.status" @click.stop>
+              <select class="bg-[#0a0a0a] text-neon-blue border border-[#333333] rounded px-2 py-1 text-xs" v-model="subtask.status" @change="updateSubtaskStatus(feature, task, subtask)" @click.stop>
                 <option value="pending">pending</option>
                 <option value="in progress">in progress</option>
                 <option value="done">done</option>
@@ -77,83 +77,160 @@
             <SubtaskModal
               v-if="modalState.visible"
               :visible="modalState.visible"
+              :subtask="modalState.subtask"
+              :feature-id="modalState.feature?.id"
               @close="closeModal"
             >
               <template #modal-heading>
-                Subtask Modal
+                {{ modalState.subtask?.title }}
               </template>
               <template #modal-meta>
-                Feature: {{ modalState.feature?.title }}<br>
-                Task: {{ modalState.task?.title }}<br>
-                Subtask: {{ modalState.subtask?.title }}
+                {{ stripProjectPrefix(modalState.feature?.external_id || modalState.feature?.id) }}: {{ modalState.feature?.title }}<br>
+                {{ stripProjectPrefix(modalState.task?.external_id || modalState.task?.id) }}: {{ modalState.task?.title }}<br>
+                {{ stripProjectPrefix(modalState.subtask?.external_id || modalState.subtask?.id) }}: {{ modalState.subtask?.title }}
               </template>
             </SubtaskModal>
           </div>
         </div>
       </div>
     </div>
-            <EntityModal
-              v-if="entityModalState.visible"
-              :visible="entityModalState.visible"
-              :entityType="entityModalState.type"
-              @close="closeEntityModal"
-            >
-              <template #modal-heading>
-                {{ entityModalState.type === 'feature' ? 'Feature Modal' : 'Task Modal' }}
-              </template>
-              <template #modal-meta>
-                <span v-if="entityModalState.type === 'feature'">
-                  Feature: {{ entityModalState.feature?.title }}
-                </span>
-                <span v-else>
-                  Feature: {{ entityModalState.feature?.title }}<br>
-                  Task: {{ entityModalState.task?.title }}
-                </span>
-              </template>
-              <template #basic-info>
-                Basic Info Placeholder
-              </template>
-              <template #activity-log>
-                Activity Log Placeholder
-              </template>
-              <template #cap-full>
-                CAP Full Analysis Placeholder
-              </template>
-              <template #cap-risks>
-                CAP Risks/Gaps Placeholder
-              </template>
-              <template #cap-clarifications>
-                CAP Clarifications Placeholder
-              </template>
-              <template #pcc-full>
-                PCC Full Analysis Placeholder
-              </template>
-              <template #pcc-risks>
-                PCC Risks/Gaps Placeholder
-              </template>
-              <template #pcc-clarifications>
-                PCC Clarifications Placeholder
-              </template>
-              <template #red-full>
-                RED Full Analysis Placeholder
-              </template>
-              <template #red-risks>
-                RED Risks/Gaps Placeholder
-              </template>
-              <template #red-clarifications>
-                RED Clarifications Placeholder
-              </template>
-            </EntityModal>
-    
-    
-    <!-- (Removed hardcoded Feature 1 block; all features are now rendered dynamically above) -->
+    <EntityModal
+      v-if="entityModalState.visible"
+      :visible="entityModalState.visible"
+      :entityType="entityModalState.type"
+      :feature="entityModalState.feature"
+      :task="entityModalState.task"
+      @close="closeEntityModal"
+    >
+      <template #modal-heading>
+        <span v-if="entityModalState.type === 'feature'">
+          {{ entityModalState.feature?.title }}
+        </span>
+        <span v-else>
+          {{ entityModalState.task?.title }}
+        </span>
+      </template>
+      <template #modal-meta>
+        <span v-if="entityModalState.type === 'feature'">
+          {{ stripProjectPrefix(entityModalState.feature?.external_id || entityModalState.feature?.id) }}: {{ entityModalState.feature?.title }}
+        </span>
+        <span v-else>
+          {{ stripProjectPrefix(entityModalState.feature?.external_id || entityModalState.feature?.id) }}: {{ entityModalState.feature?.title }}<br>
+          {{ stripProjectPrefix(entityModalState.task?.external_id || entityModalState.task?.id) }}: {{ entityModalState.task?.title }}
+        </span>
+      </template>
+      <template #basic-info>
+        <InfoDisplay
+          v-if="entityModalState.type === 'feature'"
+          :data="entityModalState.feature?.basic_info"
+          label="No basic info available."
+        />
+        <InfoDisplay
+          v-else-if="entityModalState.type === 'task'"
+          :data="entityModalState.task?.basic_info"
+          label="No basic info available."
+        />
+        <span v-else>No basic info available.</span>
+      </template>
+      <template #activity-log>
+        <div v-if="entityModalState.type === 'feature' && entityModalState.feature?.activity_log && entityModalState.feature.activity_log.length">
+          <div
+            v-for="(entry, idx) in entityModalState.feature.activity_log"
+            :key="idx"
+            class="chat-row"
+          >
+            <div class="chat-bubble chat-bubble-left">
+              <span class="chat-message">{{ entry.message || entry }}</span>
+              <span class="chat-meta-inline chat-meta-left">
+                {{ entry.sender || "You" }} •
+                {{ entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' }}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="entityModalState.type === 'task' && entityModalState.task?.activity_log && entityModalState.task.activity_log.length">
+          <div
+            v-for="(entry, idx) in entityModalState.task.activity_log"
+            :key="idx"
+            class="chat-row"
+          >
+            <div class="chat-bubble chat-bubble-left">
+              <span class="chat-message">{{ entry.message || entry }}</span>
+              <span class="chat-meta-inline chat-meta-left">
+                {{ entry.sender || "You" }} •
+                {{ entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' }}
+              </span>
+            </div>
+          </div>
+        </div>
+        <span v-else>No activity log available.</span>
+      </template>
+      <template #cap-full>
+        <InfoDisplay
+          v-if="entityModalState.type === 'feature'"
+          :data="entityModalState.feature?.cap"
+          label="No CAP data available."
+        />
+        <InfoDisplay
+          v-else-if="entityModalState.type === 'task'"
+          :data="entityModalState.task?.cap"
+          label="No CAP data available."
+        />
+        <span v-else>No CAP data available.</span>
+      </template>
+      <template #cap-risks>
+        <span>CAP Risks/Gaps Placeholder</span>
+      </template>
+      <template #cap-clarifications>
+        <span>CAP Clarifications Placeholder</span>
+      </template>
+      <template #pcc-full>
+        <InfoDisplay
+          v-if="entityModalState.type === 'feature'"
+          :data="entityModalState.feature?.pcc"
+          label="No PCC data available."
+        />
+        <InfoDisplay
+          v-else-if="entityModalState.type === 'task'"
+          :data="entityModalState.task?.pcc"
+          label="No PCC data available."
+        />
+        <span v-else>No PCC data available.</span>
+      </template>
+      <template #pcc-risks>
+        <span>PCC Risks/Gaps Placeholder</span>
+      </template>
+      <template #pcc-clarifications>
+        <span>PCC Clarifications Placeholder</span>
+      </template>
+      <template #red-full>
+        <InfoDisplay
+          v-if="entityModalState.type === 'feature'"
+          :data="entityModalState.feature?.red"
+          label="No RED data available."
+        />
+        <span v-else>No RED data available.</span>
+      </template>
+      <template #red-risks>
+        <span>RED Risks/Gaps Placeholder</span>
+      </template>
+      <template #red-clarifications>
+        <span>RED Clarifications Placeholder</span>
+      </template>
+    </EntityModal>
   </div>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, h } from 'vue'
 import SubtaskModal from './SubtaskModal.vue'
 import EntityModal from './EntityModal.vue'
+
+// Utility to strip "P1-" prefix from externalId
+function stripProjectPrefix(id) {
+  if (!id) return '';
+  return id.replace(/^P\d+-/, '');
+}
 
 const props = defineProps({
   features: {
@@ -240,6 +317,83 @@ watch(
   },
   { deep: true }
 )
+async function updateFeatureStatus(feature) {
+  try {
+    await fetch(`/api/features/${feature.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: feature.status })
+    });
+    emit('update:features', props.features);
+  } catch (err) {
+    console.error('Failed to update feature status:', err);
+  }
+}
+
+async function updateTaskStatus(feature, task) {
+  try {
+    await fetch(`/api/features/${feature.id}/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: task.status })
+    });
+    emit('update:features', props.features);
+  } catch (err) {
+    console.error('Failed to update task status:', err);
+  }
+}
+
+async function updateSubtaskStatus(feature, task, subtask) {
+  try {
+    await fetch(`/api/features/${feature.id}/tasks/${task.id}/subtasks/${subtask.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: subtask.status })
+    });
+    emit('update:features', props.features);
+  } catch (err) {
+    console.error('Failed to update subtask status:', err);
+  }
+}
+
+// InfoDisplay as a functional component using render function
+const InfoDisplay = (props) => {
+  const { data, label } = props;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return h('div', { class: 'basic-info-list' },
+      Object.entries(data).map(([key, value]) =>
+        h('div', { class: 'mb-2' }, [
+          h('div', { class: 'font-bold text-neon-blue mb-1' }, key.charAt(0).toUpperCase() + key.slice(1)),
+          Array.isArray(value)
+            ? h('ul', { class: 'list-disc ml-6' },
+                value.map((item, idx) =>
+                  h('li', { key: idx, class: 'break-words text-white' }, item)
+                )
+              )
+            : typeof value === 'object' && value !== null
+              ? h('div', { class: 'break-words text-white' }, [
+                  h('pre', null, JSON.stringify(value, null, 2))
+                ])
+              : h('div', { class: 'break-words text-white' }, value)
+        ])
+      )
+    );
+  } else if (Array.isArray(data)) {
+    return h('ul', { class: 'basic-info-list list-disc ml-6' },
+      data.map((item, idx) =>
+        h('li', { key: idx, class: 'break-words text-white' }, item)
+      )
+    );
+  } else if (typeof data === 'string' || typeof data === 'number') {
+    return h('div', { class: 'basic-info-list break-words text-white' }, data);
+  } else {
+    return h('span', null, label);
+  }
+};
+InfoDisplay.props = {
+  data: { type: [Object, Array, String, Number], default: null },
+  label: { type: String, default: '' }
+};
 </script>
 
 <style scoped>
@@ -249,5 +403,47 @@ watch(
 /* Neon blue for hover border */
 :global(.border-neon-blue) {
   border-color: #00f3ff !important;
+}
+.basic-info-list {
+  max-height: 300px;
+  overflow-y: auto;
+  word-break: break-word;
+  white-space: pre-line;
+}
+.chat-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.chat-bubble {
+  border-radius: 12px;
+  padding: 8px 12px;
+  max-width: 80%;
+  word-break: break-word;
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+  background: #222;
+  color: #fff;
+}
+.chat-bubble-left {
+  align-self: flex-start;
+  justify-content: flex-start;
+}
+.chat-meta-inline {
+  font-size: 0.75em;
+  color: #00f3ff;
+  font-weight: bold;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+.chat-meta-left {
+  color: #00f3ff;
+  text-align: left;
+}
+.chat-message {
+  font-size: 1em;
+  color: inherit;
 }
 </style>

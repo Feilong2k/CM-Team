@@ -1,0 +1,74 @@
+# Tara CDP Analysis for Subtask 1-1-1
+# Target: Create Orion Workflow SQL Schema
+# Source: Feature1_Implementation_Requirements_v1.0.md
+
+---
+## 1. Atomic Actions (from spec)
+- Create migration file `backend/migrations/002_orion_workflow.sql`
+- Define 5 tables with specific columns:
+  1. `planning_docs` (id, project_id, title, type, content_md, status)
+  2. `features` (id, project_id, title, status, created_at, updated_at, JSONB columns)
+  3. `tasks` (id, feature_id, title, status, linked_plan_id, created_at, updated_at, JSONB columns)
+  4. `subtasks` (id, task_id, title, status, parent_id [recursive], created_at, updated_at, JSONB columns)
+  5. `task_steps` (id, subtask_id, agent_role, prompt, status, created_at, updated_at)
+- All Foreign Keys use `ON DELETE CASCADE`
+- Migration must run successfully via migration runner
+
+## 2. Resources Touched
+- **File System**: `backend/migrations/002_orion_workflow.sql` (write)
+- **Database**: PostgreSQL (read/write via migration)
+- **Migration Runner**: `scripts/migrate.js` (execution)
+
+## 3. System Physics
+- **Ordering**: Must be `002_` to follow `001_test_table.sql`
+- **Transaction Safety**: Migration runs in its own transaction
+- **Schema Dependencies**: Tables have foreign key relationships
+- **Recursive Structure**: `subtasks.parent_id` allows infinite nesting
+- **JSONB Columns**: PostgreSQL JSONB type for flexible data storage
+- **Concurrency**: Single migration execution (no concurrent schema changes)
+
+## 4. Test Seams Validation
+- **Migration File**: Can be validated by reading SQL content
+- **Database Schema**: Can be queried via `information_schema`
+- **Foreign Keys**: Can be verified via constraint queries
+- **JSONB Columns**: Can validate column type and structure
+- **Recursive FK**: `subtasks.parent_id` references `subtasks.id`
+
+**Seam Status**: ✅ Acceptable. All layers are observable and testable.
+
+## 5. Anti-Placeholder Risks
+- **Risk 1**: SQL file could be empty or contain invalid syntax
+  - **Mitigation**: Test must verify SQL executes without errors
+- **Risk 2**: Tables could be missing required columns
+  - **Mitigation**: Test must verify column names and types
+- **Risk 3**: Foreign keys could be missing or incorrect
+  - **Mitigation**: Test must verify FK constraints exist
+- **Risk 4**: `ON DELETE CASCADE` could be missing
+  - **Mitigation**: Test must verify constraint behavior
+- **Risk 5**: JSONB columns could be wrong type
+  - **Mitigation**: Test must verify column data types
+
+## 6. Security & Edge Cases
+- **SQL Injection**: Not applicable (static SQL file)
+- **Data Integrity**: Foreign keys ensure referential integrity
+- **Recursive Depth**: `parent_id` allows cycles (need application-level validation)
+- **JSONB Validation**: Application must validate JSON structure
+- **Migration Idempotency**: Should be safe to run multiple times
+
+## 7. Test Scenarios (Derived)
+### Integration Tests (real DB)
+1. **Migration Execution**: Run migration, verify no errors
+2. **Table Existence**: Verify all 5 tables exist
+3. **Column Validation**: Verify each table has correct columns
+4. **Foreign Key Validation**: Verify FK constraints with `ON DELETE CASCADE`
+5. **JSONB Columns**: Verify JSONB column types
+6. **Recursive FK**: Verify `subtasks.parent_id` references `subtasks.id`
+
+## 8. Clarification Needed
+- **None**. Spec is clear and comprehensive.
+
+## 9. Blocking Status
+- **Unblocked**. All required seams are present and testable.
+
+---
+## Next Step: Write failing integration test in `backend/tests/schema_v2.spec.js`

@@ -33,14 +33,27 @@ e<template>
 import ChatPanel from './components/ChatPanel.vue'
 import FeatureTree from './components/FeatureTree.vue'
 import { ref, watch } from 'vue'
-import featureData from './utils/featureData.json'
-
 const handleSendMessage = (message) => {
   console.log('Message sent:', message)
   // For now, just log. In a real app, this would be sent to the backend.
 }
 
-const features = ref(featureData.features)
+import { onMounted } from 'vue'
+
+const features = ref([])
+
+const fetchFeatures = async () => {
+  try {
+    const res = await fetch('/api/features')
+    if (!res.ok) throw new Error('Failed to fetch features')
+    const data = await res.json()
+    features.value = data.features || []
+  } catch (err) {
+    console.error('Error fetching features:', err)
+  }
+}
+
+onMounted(fetchFeatures)
 
 const updateFeatures = (newFeatures) => {
   // This function is called when FeatureTree emits an update.

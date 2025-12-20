@@ -179,10 +179,30 @@
         <span v-else>No CAP data available.</span>
       </template>
       <template #cap-risks>
-        <span>CAP Risks/Gaps Placeholder</span>
+        <InfoDisplay
+          v-if="entityModalState.type === 'feature'"
+          :data="entityModalState.feature?.cap?.risks"
+          label="No CAP risks/gaps available."
+        />
+        <InfoDisplay
+          v-else-if="entityModalState.type === 'task'"
+          :data="entityModalState.task?.cap?.risks"
+          label="No CAP risks/gaps available."
+        />
+        <span v-else>No CAP risks/gaps available.</span>
       </template>
       <template #cap-clarifications>
-        <span>CAP Clarifications Placeholder</span>
+        <InfoDisplay
+          v-if="entityModalState.type === 'feature'"
+          :data="entityModalState.feature?.cap?.questions"
+          label="No CAP clarifications available."
+        />
+        <InfoDisplay
+          v-else-if="entityModalState.type === 'task'"
+          :data="entityModalState.task?.cap?.questions"
+          label="No CAP clarifications available."
+        />
+        <span v-else>No CAP clarifications available.</span>
       </template>
       <template #pcc-full>
         <InfoDisplay
@@ -198,31 +218,54 @@
         <span v-else>No PCC data available.</span>
       </template>
       <template #pcc-risks>
-        <span>PCC Risks/Gaps Placeholder</span>
+        <InfoDisplay
+          v-if="entityModalState.type === 'feature'"
+          :data="entityModalState.feature?.pcc?.risks"
+          label="No PCC risks/gaps available."
+        />
+        <InfoDisplay
+          v-else-if="entityModalState.type === 'task'"
+          :data="entityModalState.task?.pcc?.risks"
+          label="No PCC risks/gaps available."
+        />
+        <span v-else>No PCC risks/gaps available.</span>
       </template>
       <template #pcc-clarifications>
-        <span>PCC Clarifications Placeholder</span>
+        <InfoDisplay
+          v-if="entityModalState.type === 'feature'"
+          :data="entityModalState.feature?.pcc?.questions"
+          label="No PCC clarifications available."
+        />
+        <InfoDisplay
+          v-else-if="entityModalState.type === 'task'"
+          :data="entityModalState.task?.pcc?.questions"
+          label="No PCC clarifications available."
+        />
+        <span v-else>No PCC clarifications available.</span>
       </template>
       <template #red-full>
         <InfoDisplay
           v-if="entityModalState.type === 'feature'"
           :data="entityModalState.feature?.red"
-          label="No RED data available."
         />
-        <span v-else>No RED data available.</span>
       </template>
       <template #red-risks>
-        <span>RED Risks/Gaps Placeholder</span>
+        <InfoDisplay
+          :data="entityModalState.feature?.red?.risks_gaps_recommendations"
+        />
       </template>
       <template #red-clarifications>
-        <span>RED Clarifications Placeholder</span>
+        <InfoDisplay
+          :data="entityModalState.feature?.red?.clarification_questions"
+        />
       </template>
     </EntityModal>
   </div>
 </template>
 
+
 <script setup>
-import { ref, watch, h } from 'vue'
+import { ref, watch, h, computed } from 'vue'
 import SubtaskModal from './SubtaskModal.vue'
 import EntityModal from './EntityModal.vue'
 
@@ -238,6 +281,9 @@ const props = defineProps({
     required: true
   }
 })
+
+// Expose a computed alias so the template can use `features`
+const features = computed(() => props.features)
 
 const emit = defineEmits(['update:features'])
 

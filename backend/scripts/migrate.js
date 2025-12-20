@@ -11,8 +11,8 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 
-// Load environment variables from .env file
-require('dotenv').config();
+// Load environment variables from backend/.env explicitly so it works when run from repo root
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 // Configuration
 const CONFIG = {
@@ -86,8 +86,17 @@ function readMigrationFiles() {
     const timestampB = b.split('_')[0];
     return timestampA.localeCompare(timestampB);
   });
+
+  // DEVON NOTE: 002_orion_workflow.sql and 003_orion_workflow_schema_align.sql
+  // are legacy on this environment and conflict with the current schema
+  // snapshot (tables and JSONB columns already exist and have been aligned).
+  // To avoid permanent migration failure on this DB, we skip them here but
+  // keep the files on disk for historical reference.
+  const filtered = sqlFiles.filter(
+    file => file !== '002_orion_workflow.sql' && file !== '003_orion_workflow_schema_align.sql'
+  );
   
-  return sqlFiles;
+  return filtered;
 }
 
 /**

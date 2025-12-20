@@ -54,72 +54,73 @@
           </div>
         </div>
       </div>
-      <div class="text-gray-200 text-sm mt-1" data-testid="modal-meta">
-        <slot name="modal-meta"></slot>
-      </div>
-      <!-- Tabs -->
-      <div class="flex border-b border-neon-blue mb-4 mt-2" data-testid="modal-tabs">
-        <button
-          v-for="(tab, idx) in tabs"
-          :key="tab"
-          :class="[
-            'px-4 py-2 text-sm font-bold focus:outline-none',
-            activeTab === idx
-              ? 'text-neon-blue border-b-2 border-neon-blue'
-              : 'text-gray-400'
-          ]"
-          @click="activeTab = idx"
-          :data-testid="'modal-tab-' + idx"
+<div class="text-gray-200 text-sm mt-1" data-testid="modal-meta" style="width: 100%;">
+  <slot name="modal-meta"></slot>
+</div>
+<!-- Tabs -->
+<div class="flex border-b border-neon-blue mb-4 mt-2" data-testid="modal-tabs" style="width: 100%;">
+  <button
+    v-for="(tab, idx) in tabs"
+    :key="tab"
+    :class="[
+      'px-4 py-2 text-sm font-bold focus:outline-none',
+      activeTab === idx
+        ? 'text-neon-blue border-b-2 border-neon-blue'
+        : 'text-gray-400'
+    ]"
+    @click="activeTab = idx"
+    :data-testid="'modal-tab-' + idx"
+  >
+    {{ tab }}
+  </button>
+</div>
+<!-- Tab Content -->
+<div class="mt-2 flex-1 flex flex-col" data-testid="modal-tab-content" style="width: 100%;">
+  <InfoDisplay v-if="activeTab === 0" :data="subtask?.basic_info" label="No basic info available." />
+  <InfoDisplay v-else-if="activeTab === 1" :data="subtask?.instruction" label="No instruction available." />
+  <div v-else-if="activeTab === 2">
+    <div v-if="subtask?.activity_log && subtask.activity_log.length">
+      <div
+        v-for="(entry, idx) in subtask.activity_log"
+        :key="idx"
+        :class="['chat-row', entry.sender === 'You' ? 'chat-row-right' : 'chat-row-left']"
+      >
+        <div
+          class="chat-bubble"
+          :class="entry.sender === 'You' ? 'chat-bubble-right' : 'chat-bubble-left'"
+          style="flex-direction: row;"
         >
-          {{ tab }}
-        </button>
-      </div>
-      <!-- Tab Content -->
-      <div class="min-h-[120px] mt-2 flex-1 flex flex-col" data-testid="modal-tab-content">
-        <InfoDisplay v-if="activeTab === 0" :data="subtask?.basic_info" label="No basic info available." />
-        <InfoDisplay v-else-if="activeTab === 1" :data="subtask?.instruction" label="No instruction available." />
-        <div v-else-if="activeTab === 2">
-          <div v-if="subtask?.activity_log && subtask.activity_log.length">
-            <div
-              v-for="(entry, idx) in subtask.activity_log"
-              :key="idx"
-              :class="['chat-row', entry.sender === 'You' ? 'chat-row-right' : 'chat-row-left']"
-            >
-              <div
-                class="chat-bubble"
-                :class="entry.sender === 'You' ? 'chat-bubble-right' : 'chat-bubble-left'"
-                style="flex-direction: row;"
-              >
-                <span class="chat-meta-inline" :class="entry.sender === 'You' ? 'chat-meta-right' : 'chat-meta-left'">
-                  {{ entry.sender || "You" }} •
-                  {{ entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' }}
-                </span>
-                <span class="chat-message ml-2">{{ entry.message || entry }}</span>
-              </div>
-            </div>
-          </div>
-          <span v-else>No activity log available.</span>
+          <span class="chat-meta-inline" :class="entry.sender === 'You' ? 'chat-meta-right' : 'chat-meta-left'">
+            {{ entry.sender || "You" }} •
+            {{ entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '' }}
+          </span>
+          <span class="chat-message ml-2">{{ entry.message || entry }}</span>
         </div>
-        <InfoDisplay v-else-if="activeTab === 3" :data="subtask?.pcc" label="No PCC data available." />
-        <InfoDisplay v-else-if="activeTab === 4" :data="subtask?.tests" label="No tests available." />
-        <InfoDisplay v-else-if="activeTab === 5" :data="subtask?.implementations" label="No implementations available." />
-        <InfoDisplay v-else-if="activeTab === 6" :data="subtask?.review" label="No review available." />
       </div>
-      <!-- Message Input always at the bottom, for all tabs -->
-      <div class="pt-4">
-        <MessageInput
-          :placeholder="'Type a message (max 3 lines)...'"
-          @send="handleSendMessage"
-          data-testid="modal-message-input"
-        />
-      </div>
-      <slot />
     </div>
+    <span v-else>No activity log available.</span>
   </div>
+  <InfoDisplay v-else-if="activeTab === 3" :data="subtask?.pcc" label="No PCC data available." />
+  <InfoDisplay v-else-if="activeTab === 4" :data="subtask?.tests" label="No tests available." />
+  <InfoDisplay v-else-if="activeTab === 5" :data="subtask?.implementations" label="No implementations available." />
+  <InfoDisplay v-else-if="activeTab === 6" :data="subtask?.review" label="No review available." />
+</div>
+<!-- Message Input always at the bottom, for all tabs -->
+<div class="pt-4" style="width: 100%;">
+  <MessageInput
+    :placeholder="'Type a message (max 3 lines)...'"
+    @send="handleSendMessage"
+    data-testid="modal-message-input"
+  />
+</div>
+<slot />
+</div>
+</div>
 </template>
 
+
 <script setup>
-import { onMounted, onUnmounted, ref, h, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, h } from 'vue'
 import MessageInput from './MessageInput.vue'
 
 const props = defineProps({
@@ -151,8 +152,6 @@ async function updateStatus() {
     });
     // Update local subtask object and emit event to parent to refresh data
     props.subtask.status = localStatus.value;
-    // Optionally emit an event to parent to refresh features/tasks/subtasks
-    // emit('refresh');
   } catch (err) {
     console.error('Failed to update subtask status:', err);
   }
@@ -167,8 +166,6 @@ async function updateWorkflowStage() {
     });
     // Update local subtask object and emit event to parent to refresh data
     props.subtask.workflow_stage = localWorkflowStage.value;
-    // Optionally emit an event to parent to refresh features/tasks/subtasks
-    // emit('refresh');
   } catch (err) {
     console.error('Failed to update subtask workflow_stage:', err);
   }

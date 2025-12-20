@@ -6,7 +6,7 @@
     tabindex="0"
     data-testid="entity-modal"
   >
-    <div class="bg-[#111111] rounded-lg shadow-lg w-[65vw] h-[90vh] p-6 relative outline-none flex flex-col">
+    <div class="bg-[#111111] rounded-lg shadow-lg w-[65vw] max-h-[90vh] p-6 relative outline-none flex flex-col">
       <button
         class="absolute top-2 right-2 text-neon-blue text-xl"
         @click="close"
@@ -41,7 +41,7 @@
         <slot name="modal-meta"></slot>
       </div>
       <!-- Tabs -->
-      <div class="flex border-b border-neon-blue mb-4 mt-2" data-testid="entity-modal-tabs">
+      <div class="flex border-b border-neon-blue mb-4 mt-2" data-testid="entity-modal-tabs" style="width: 100%;">
         <button
           v-for="(tab, idx) in tabs"
           :key="tab"
@@ -58,7 +58,7 @@
         </button>
       </div>
       <!-- Tab Content -->
-      <div class="min-h-[120px] mt-2 flex-1 overflow-y-auto" data-testid="entity-modal-tab-content">
+      <div class="min-h-[600px] mt-2 flex-1 overflow-y-auto" data-testid="entity-modal-tab-content" style="width: 100%;">
         <div v-if="activeTab === 0">
           <slot name="basic-info">Basic Info Placeholder</slot>
         </div>
@@ -66,57 +66,21 @@
           <slot name="activity-log">Activity Log Placeholder</slot>
         </div>
         <div v-else-if="activeTab === 2">
-          <div>
-            <div class="font-bold text-neon-blue mb-2">PCC (Preflight Constraint Check)</div>
-            <details>
-              <summary class="cursor-pointer text-gray-200">Full PCC Analysis (click to expand/collapse)</summary>
-              <div class="mt-2">
-                <slot name="pcc-full">PCC Full Analysis Placeholder</slot>
-              </div>
-            </details>
-            <div class="mt-4">
-              <div class="font-bold text-gray-300">Risks / Gaps & Recommendations</div>
-              <slot name="pcc-risks">PCC Risks/Gaps Placeholder</slot>
-              <div class="font-bold text-gray-300 mt-2">Clarifications Needed</div>
-              <slot name="pcc-clarifications">PCC Clarifications Placeholder</slot>
-            </div>
-          </div>
+          <slot name="pcc-full"></slot>
+          <slot name="pcc-risks"></slot>
+          <slot name="pcc-clarifications"></slot>
         </div>
         <!-- RED tab (only for features) -->
         <div v-else-if="props.entityType === 'feature' && activeTab === 3">
-          <div>
-            <div class="font-bold text-neon-blue mb-2">RED (Recursive Execution Decomposition)</div>
-            <details>
-              <summary class="cursor-pointer text-gray-200">Full RED Analysis (click to expand/collapse)</summary>
-              <div class="mt-2">
-                <slot name="red-full">RED Full Analysis Placeholder</slot>
-              </div>
-            </details>
-            <div class="mt-4">
-              <div class="font-bold text-gray-300">Risks / Gaps & Recommendations</div>
-              <slot name="red-risks">RED Risks/Gaps Placeholder</slot>
-              <div class="font-bold text-gray-300 mt-2">Clarifications Needed</div>
-              <slot name="red-clarifications">RED Clarifications Placeholder</slot>
-            </div>
-          </div>
+          <slot name="red-full"></slot>
+          <slot name="red-risks"></slot>
+          <slot name="red-clarifications"></slot>
         </div>
         <!-- CAP tab (index depends on entity type) -->
         <div v-else-if="(props.entityType === 'feature' && activeTab === 4) || (props.entityType === 'task' && activeTab === 3)">
-          <div>
-            <div class="font-bold text-neon-blue mb-2">CAP (Constraint-Aware Planning)</div>
-            <details>
-              <summary class="cursor-pointer text-gray-200">Full CAP Analysis (click to expand/collapse)</summary>
-              <div class="mt-2">
-                <slot name="cap-full">CAP Full Analysis Placeholder</slot>
-              </div>
-            </details>
-            <div class="mt-4">
-              <div class="font-bold text-gray-300">Risks / Gaps & Recommendations</div>
-              <slot name="cap-risks">CAP Risks/Gaps Placeholder</slot>
-              <div class="font-bold text-gray-300 mt-2">Clarifications Needed</div>
-              <slot name="cap-clarifications">CAP Clarifications Placeholder</slot>
-            </div>
-          </div>
+          <slot name="cap-full"></slot>
+          <slot name="cap-risks"></slot>
+          <slot name="cap-clarifications"></slot>
         </div>
       </div>
       <!-- Message Input always at the bottom, for all tabs -->

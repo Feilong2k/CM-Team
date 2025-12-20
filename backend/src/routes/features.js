@@ -19,6 +19,30 @@ router.get('/', async (req, res) => {
     const subtasksRes = await db.query('SELECT * FROM subtasks ORDER BY id');
     const subtasks = subtasksRes.rows;
 
+    // Get all subtask activity logs
+    const logsRes = await db.query('SELECT * FROM subtask_activity_logs ORDER BY timestamp');
+    const allLogs = logsRes.rows;
+    const subtaskIdToLogs = {};
+    for (const log of allLogs) {
+      if (!subtaskIdToLogs[log.subtask_id]) subtaskIdToLogs[log.subtask_id] = [];
+      subtaskIdToLogs[log.subtask_id].push(log);
+    }
+    // Attach logs to each subtask
+    for (const subtask of subtasks) {
+      const rawLogs = subtaskIdToLogs[subtask.id] || [];
+      // New relational source of truth (raw DB rows)
+      subtask.activity_logs = rawLogs;
+      // Backwards-compatible alias for existing UI, which expects simple
+      // { sender, message, timestamp } objects in `activity_log`.
+      subtask.activity_log = rawLogs.map((log) => ({
+        sender: log.agent || 'Devon',
+        message: log.content,
+        timestamp: log.timestamp,
+        // keep original fields in case the UI or future code wants them
+        _raw: log,
+      }));
+    }
+
     // Nest subtasks under tasks
     const taskIdToSubtasks = {};
     for (const subtask of subtasks) {

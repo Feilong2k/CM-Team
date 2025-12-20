@@ -12,6 +12,8 @@ module.exports = {
       },
       colors: {
         'neon-blue': '#00ffff',
+        'neon-green': '#00e676',
+        'neon-pink': '#ff00ff',
       },
     },
   },

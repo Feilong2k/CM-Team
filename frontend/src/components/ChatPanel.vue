@@ -24,8 +24,31 @@
       </div>
     </div>
     <!-- Message input -->
-    <div class="p-4 border-t border-[#333333]">
-      <MessageInput @send="handleSendMessage" />
+    <div class="p-4 border-t border-[#333333] flex items-center gap-4">
+      <!-- Plan/Act Toggle -->
+      <div class="flex items-center bg-gray-800 rounded p-1">
+        <button
+          @click="currentMode = 'plan'"
+          :class="[
+            'px-3 py-1 rounded text-xs font-bold transition-colors',
+            currentMode === 'plan' ? 'bg-neon-blue text-black' : 'text-gray-400 hover:text-white'
+          ]"
+        >
+          PLAN
+        </button>
+        <button
+          @click="currentMode = 'act'"
+          :class="[
+            'px-3 py-1 rounded text-xs font-bold transition-colors',
+            currentMode === 'act' ? 'bg-neon-pink text-black' : 'text-gray-400 hover:text-white'
+          ]"
+        >
+          ACT
+        </button>
+      </div>
+      <div class="flex-1">
+        <MessageInput @send="handleSendMessage" />
+      </div>
     </div>
   </div>
 </template>
@@ -37,6 +60,8 @@ import { renderMarkdown, exampleMarkdown } from '../utils/markdown.js'
 
 // Reactive array of messages
 const messages = ref([])
+// Current mode (default: 'plan')
+const currentMode = ref('plan')
 
 // Initialize with example messages
 onMounted(() => {
@@ -48,7 +73,7 @@ onMounted(() => {
   // })
 })
 
-const handleSendMessage = (messageText) => {
+const handleSendMessage = async (messageText) => {
   // Add user message
   messages.value.push({
     type: 'user',
@@ -56,25 +81,42 @@ const handleSendMessage = (messageText) => {
     html: null
   })
 
-  // Simulate AI response after a short delay
-  setTimeout(() => {
-    const aiResponse = `I received your message: "${messageText}"
+  try {
+    const response = await fetch('http://localhost:3500/api/chat/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        external_id: 'P1', // Using P1 as default project ID
+        sender: 'user',
+        content: messageText,
+        metadata: {
+          mode: currentMode.value
+        }
+      })
+    })
 
-**This is a markdown response:**
-- Item 1
-- Item 2
-- Item 3
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`)
+    }
 
-\`\`\`javascript
-console.log("Code block example")
-\`\`\`
-`
+    const data = await response.json()
+    
+    // Add AI response
     messages.value.push({
       type: 'ai',
-      content: aiResponse,
-      html: renderMarkdown(aiResponse)
+      content: data.message,
+      html: renderMarkdown(data.message)
     })
-  }, 500)
+  } catch (error) {
+    console.error('Error sending message:', error)
+    messages.value.push({
+      type: 'ai',
+      content: 'Error: Failed to get response from Orion.',
+      html: renderMarkdown('**Error**: Failed to get response from Orion.')
+    })
+  }
 }
 </script>
 

@@ -1,0 +1,8 @@
+{
+  "subtask_id": "P1-F2-T0-S3",
+  "instructions": {
+    "orion": "Update F2-T0-S3 instructions for .gitignore support and TDD",
+    "tara": "Write tests for .gitignore-aware file utilities",
+    "devon": "Implement .gitignore support in list_files and search_files"
+  }
+}

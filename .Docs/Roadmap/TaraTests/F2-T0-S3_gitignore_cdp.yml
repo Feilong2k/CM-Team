@@ -1,0 +1,88 @@
+# Tara CDP Analysis for Subtask P1-F2-T0-S3
+# Target: Implement .gitignore support in list_files and search_files
+# Source: Proposed Implementation Plan & DB instructions
+
+---
+## 1. Atomic Actions (from spec)
+- Install `ignore` package as regular dependency
+- Read `.gitignore` file at project root (and parent directories following git hierarchy)
+- Parse ignore patterns and create `ignore` instance
+- Integrate ignore checking into `listFiles` function: skip ignored directories (prune traversal), omit ignored files
+- Integrate ignore checking into `searchFiles` function: skip reading ignored files, do not descend into ignored directories
+- Add CLI flag `--no-ignore` to optionally disable ignoring
+- Fallback to default ignore patterns if no `.gitignore` found (e.g., `node_modules/`, `.git/`, `*.log`)
+
+## 2. Resources Touched
+- **File System**: 
+  - `.gitignore` file(s) (read-only)
+  - Directory tree being traversed (read-only)
+  - Files being searched (read-only for content)
+- **Package Management**: `backend/package.json` (write for dependency addition)
+- **Node.js Modules**: `ignore` package (new dependency)
+- **Environment**: Current working directory, project root detection
+
+## 3. System Physics
+- **Pattern Matching**: Must handle gitignore pattern semantics (negation, globs, directory markers, etc.)
+- **Hierarchy**: Must respect git's rule hierarchy (parent directories' .gitignore files)
+- **Performance**: Ignore checking adds overhead per file/directory; should be efficient for large trees
+- **Concurrency**: Single-threaded traversal; no race conditions expected
+- **File I/O**: Reading .gitignore files may fail (permissions, missing file); must handle gracefully
+- **Memory**: Ignore patterns loaded once per traversal; should not be heavy
+
+## 4. Test Seams Validation
+- **File System**: Can be mocked via `fs` module
+- **Ignore Library**: `ignore` package can be mocked or real
+- **Pattern Loading**: Function to load patterns from .gitignore file(s)
+- **Integration Points**: `listFiles` and `searchFiles` accept ignore instance parameter
+- **CLI Parsing**: Command-line flag `--no-ignore`
+
+**Seam Status**: ✅ Acceptable. Each component can be isolated for testing.
+
+## 5. Anti-Placeholder Risks
+- **Risk 1**: Implementation could hardcode success without actually reading .gitignore
+  - **Mitigation**: Test must verify `.gitignore` file is read and patterns are applied
+- **Risk 2**: Implementation could ignore pattern semantics (negation, glob matching)
+  - **Mitigation**: Test must verify complex pattern matching works correctly
+- **Risk 3**: Implementation could skip directory pruning, only filter files
+  - **Mitigation**: Test must verify ignored directories are not traversed
+- **Risk 4**: `--no-ignore` flag could be ignored
+  - **Mitigation**: Test must verify flag disables ignore filtering
+- **Risk 5**: Fallback patterns could be missing or incorrect
+  - **Mitigation**: Test must verify default patterns are used when .gitignore missing
+
+## 6. Security & Edge Cases
+- **Path Traversal**: Ensure ignore patterns cannot cause directory traversal attacks
+- **Large .gitignore**: Handle large ignore files without excessive memory
+- **Malformed Patterns**: Gracefully handle invalid gitignore patterns
+- **Symlinks**: Should follow symlinks? (Assume no, treat as regular files/dirs)
+- **Hidden Files**: `.gitignore` itself should be ignored by default
+- **Performance**: Should not significantly degrade on large codebases
+
+## 7. Test Scenarios (Derived)
+### Unit Tests (mocked)
+1. `loadIgnorePatterns` – reads .gitignore, returns ignore instance
+2. `loadIgnorePatterns` – falls back to default patterns when .gitignore missing
+3. `loadIgnorePatterns` – handles parent directory .gitignore hierarchy
+4. `listFiles` with ignore – skips ignored files
+5. `listFiles` with ignore – prunes ignored directories (does not traverse)
+6. `searchFiles` with ignore – skips ignored files
+7. `searchFiles` with ignore – does not descend into ignored directories
+8. CLI `--no-ignore` flag – disables ignore filtering
+
+### Integration Tests (real filesystem)
+1. **Happy Path**: Create test .gitignore, verify files are filtered
+2. **Pattern Types**: Test globs, negations, directory markers
+3. **Hierarchy**: Test parent .gitignore overrides child
+4. **Missing .gitignore**: Verify default patterns applied
+5. **Performance**: Large directory tree with ignore patterns
+
+## 8. Clarification Needed
+- **Symlink handling**: Should symlinks be followed? (Assume no for safety)
+- **Binary files**: Should searchFiles skip binary files even if not ignored? (Current implementation tries to read as UTF-8)
+- **Error handling**: What should happen if .gitignore is unreadable? (Fallback to defaults? Throw error?)
+
+## 9. Blocking Status
+- **Unblocked**. Implementation plan is clear and test seams exist.
+
+---
+## Next Step: Write failing tests in `backend/src/_test_/context_tools.spec.js`

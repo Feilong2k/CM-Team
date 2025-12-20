@@ -1,0 +1,105 @@
+# Tara CDP Analysis for Subtask P1-F2-T1-S1
+# Target: Phase 1: LLM Adapter Foundation
+# Source: Subtask instructions from database
+
+---
+## 1. Atomic Actions (from spec)
+- Create directory: backend/src/adapters/
+- Create LLMAdapter.js abstract class with interface methods:
+  - sendMessage()
+  - parseResponse() 
+  - handleToolCalls()
+  - getUsageStats()
+- Create DS_ChatAdapter.js extending LLMAdapter with DeepSeek API implementation
+- Implement basic API call with fetch/axios, error handling, and retry logic
+- Add environment variable validation for DEEPSEEK_API_KEY
+- Create simple test to verify API connectivity
+
+## 2. Resources Touched
+- **File System**: 
+  - Directory creation: backend/src/adapters/
+  - File creation: LLMAdapter.js, DS_ChatAdapter.js, index.js (optional)
+  - File modification: backend/.env.example
+- **External API**: DeepSeek API (https://api.deepseek.com)
+- **Environment Variables**: DEEPSEEK_API_KEY (required)
+- **Network**: HTTP/HTTPS requests to external API
+- **Package Management**: Potential new dependencies (axios, node-fetch, etc.)
+
+## 3. System Physics
+- **Network Latency**: API calls have variable response times
+- **Rate Limiting**: DeepSeek API may have rate limits
+- **Authentication**: API key must be securely stored and transmitted
+- **Error Handling**: Network failures, API errors, timeouts, invalid responses
+- **Retry Logic**: Exponential backoff for transient failures
+- **Memory**: Response parsing and token management
+- **Async Operations**: All API calls are asynchronous
+
+## 4. Test Seams Validation
+- **LLMAdapter Interface**: Abstract class defines contract; can be mocked
+- **DS_ChatAdapter Implementation**: Concrete class with real API calls; can be tested with mocks
+- **Environment Validation**: Function to check DEEPSEEK_API_KEY exists
+- **HTTP Client**: Can be mocked (axios/fetch)
+- **Error Handling**: Can simulate network failures, API errors
+- **Retry Logic**: Can be tested with controlled failures
+
+**Seam Status**: ✅ Acceptable. Each component can be isolated for testing.
+
+## 5. Anti-Placeholder Risks
+- **Risk 1**: LLMAdapter could be concrete instead of abstract, allowing empty implementations
+  - **Mitigation**: Test must verify LLMAdapter cannot be instantiated directly
+- **Risk 2**: DS_ChatAdapter could hardcode success without making real API calls
+  - **Mitigation**: Test must verify HTTP client is called with correct parameters
+- **Risk 3**: Environment validation could be skipped or always return true
+  - **Mitigation**: Test must verify validation fails when DEEPSEEK_API_KEY is missing
+- **Risk 4**: Error handling could be missing or incomplete
+  - **Mitigation**: Test must verify network failures, API errors, timeouts are handled
+- **Risk 5**: Retry logic could be missing or ineffective
+  - **Mitigation**: Test must verify retries occur on transient failures
+- **Risk 6**: parseResponse() could return hardcoded data
+  - **Mitigation**: Test must verify response parsing uses actual API response structure
+
+## 6. Security & Edge Cases
+- **API Key Security**: Should not be logged or exposed in errors
+- **Input Validation**: Validate message content, parameters before sending
+- **Response Validation**: Validate API response structure before parsing
+- **Timeout Handling**: Requests should timeout after reasonable period
+- **Memory Safety**: Large responses should not cause memory issues
+- **Concurrent Requests**: Handle multiple simultaneous requests (if applicable)
+- **Configuration**: Support different API endpoints, timeouts via configuration
+
+## 7. Test Scenarios (Derived)
+### Unit Tests (mocked)
+1. **LLMAdapter Interface** - Cannot be instantiated directly (abstract)
+2. **LLMAdapter Interface** - Defines required methods (sendMessage, parseResponse, etc.)
+3. **DS_ChatAdapter Construction** - Requires valid configuration
+4. **Environment Validation** - Fails when DEEPSEEK_API_KEY missing
+5. **Environment Validation** - Succeeds when DEEPSEEK_API_KEY present
+6. **sendMessage()** - Calls HTTP client with correct parameters
+7. **sendMessage()** - Includes proper headers (Authorization, Content-Type)
+8. **sendMessage()** - Handles network failures (throws/retries)
+9. **sendMessage()** - Handles API errors (4xx, 5xx responses)
+10. **sendMessage()** - Implements retry logic on transient failures
+11. **parseResponse()** - Extracts message content from DeepSeek response format
+12. **parseResponse()** - Handles malformed API responses
+13. **handleToolCalls()** - Placeholder for future implementation (can throw "not implemented")
+14. **getUsageStats()** - Extracts token usage from response
+
+### Integration Tests (optional, with real API)
+1. **API Connectivity** - Can make successful call to DeepSeek (with valid key)
+2. **Error Response** - Handles invalid API key error
+3. **Rate Limiting** - Handles rate limit responses
+
+## 8. Clarification Needed
+- **DeepSeek API Version**: Which API version should be used? (Assume latest)
+- **Response Format**: Exact JSON structure expected from DeepSeek API
+- **Tool Calling**: handleToolCalls() - should it throw "not implemented" or return empty?
+- **Configuration**: Should timeout, max retries, base URL be configurable?
+- **Logging**: What level of logging is appropriate? (Avoid logging API keys)
+
+## 9. Blocking Status
+- **Unblocked**. Implementation plan is clear and test seams exist.
+- **Note**: Need DeepSeek API documentation for exact response format
+
+---
+## Next Step: Write failing tests in `backend/src/_test_/llm_adapter.spec.js`
+## Test Priority: Unit tests with mocking first, integration tests optional

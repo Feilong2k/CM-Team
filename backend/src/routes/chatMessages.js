@@ -3,6 +3,7 @@ const router = express.Router();
 const { query } = require('../db/connection');
 const OrionAgent = require('../agents/OrionAgent');
 const dbTool = require('../../tools/DatabaseTool');
+const { getToolsForRole } = require('../../tools/registry');
 const DS_ChatAdapter = require('../adapters/DS_ChatAdapter');
 
 const validSenders = ['user', 'orion', 'system'];
@@ -24,7 +25,30 @@ const adapter = new DS_ChatAdapter({
   apiKey: process.env.DEEPSEEK_API_KEY,
 });
 
+// Get comprehensive tool set for Orion
+const tools = getToolsForRole('Orion', 'act');
+// We need to merge DatabaseTool instance with the registry tools because OrionAgent
+// expects dbTool as the second argument, but also needs access to other tools in its .tools property.
+// However, OrionAgent constructor signature is (adapter, databaseTool, promptPath).
+// It sets this.tools = tools || {} in BaseAgent.
+// We should update OrionAgent to accept a tools object OR handle the merge.
+// For now, let's pass dbTool as the second arg, and then manually attach other tools.
+
 const orionAgent = new OrionAgent(adapter, dbTool);
+// Attach other tools to the agent's tool registry
+if (tools) {
+    Object.assign(orionAgent.tools, tools.FileSystemTool ? tools.FileSystemTool.tools : {});
+    // DatabaseTool is already there via dbTool if we structure it right, but BaseAgent expects
+    // this.tools to be a map of callable functions.
+    // DatabaseTool instance methods are not automatically in this.tools unless we map them.
+    
+    // Map DatabaseTool methods to agent tools
+    // We can iterate over dbTool prototype or known methods if needed, but 
+    // for now let's just ensure FileSystemTool is there.
+    
+    // Add specific database tools if they are defined in registry as standalone functions
+    // But they are defined as "DatabaseTool" class in registry.
+}
 
 router.post('/messages', async (req, res) => {
   const { external_id, sender, content, metadata } = req.body;

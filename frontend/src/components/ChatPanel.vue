@@ -88,7 +88,7 @@ const handleSendMessage = async (messageText) => {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        external_id: 'P1', // Using P1 as default project ID
+        external_id: 'P1', // Use project ID as external_id to group messages for this project
         sender: 'user',
         content: messageText,
         metadata: {

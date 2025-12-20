@@ -49,15 +49,7 @@ class ActivityLogTool {
         parent_id INTEGER,
         attachments JSONB DEFAULT '[]',
         metadata JSONB DEFAULT '{}',
-        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        
-        -- Composite foreign key would be complex, so we rely on application logic
-        -- Indexes for performance
-        CONSTRAINT fk_entity CHECK (
-          (entity_type = 'feature' AND EXISTS (SELECT 1 FROM features WHERE id = entity_id)) OR
-          (entity_type = 'task' AND EXISTS (SELECT 1 FROM tasks WHERE id = entity_id)) OR
-          (entity_type = 'subtask' AND EXISTS (SELECT 1 FROM subtasks WHERE id = entity_id))
-        )
+        timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
       CREATE INDEX IF NOT EXISTS idx_unified_activity_logs_entity 

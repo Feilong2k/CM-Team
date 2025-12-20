@@ -1,7 +1,5 @@
 const FileSystemTool = require('./FileSystemTool');
-const GitTool = require('./GitTool');
 const { DatabaseTool } = require('./DatabaseTool'); // Import the class, not instance
-const ShellTool = require('./ShellTool');
 
 /**
  * Role-based tool registry.
@@ -11,19 +9,13 @@ const ShellTool = require('./ShellTool');
 const roleCapabilities = {
   Devon: {
     FileSystemTool,
-    GitTool,
-    ShellTool
   },
   Tara: {
     FileSystemTool,
-    GitTool,
-    ShellTool  // Tara needs shell for running tests
   },
   Orion: {
     FileSystemTool,
-    GitTool,
     DatabaseTool,
-    ShellTool
   }
 };
 
@@ -33,8 +25,6 @@ const roleCapabilities = {
 function getToolDescriptions() {
   return {
     FileSystemTool: 'Read/write files with path traversal protection',
-    GitTool: 'Git operations (commit, branch, push, pull) with safety checks',
-    ShellTool: 'Execute shell commands with whitelist/blocklist safety',
     DatabaseTool: 'Direct database queries (Orion-only)'
   };
 }

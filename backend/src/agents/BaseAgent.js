@@ -1,4 +1,4 @@
-const { parseFunctionCall } = require('../../tools/functionDefinitions');
+const { executeToolCall, executeToolCalls } = require('../../tools/ToolRunner');
 
 /**
  * Abstract base class for AI agents.
@@ -59,42 +59,7 @@ class BaseAgent {
    * @returns {Promise<Array>} Array of tool execution results
    */
   async handleToolCalls(toolCalls, context) {
-    if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
-      return [];
-    }
-
-    const results = [];
-    for (const toolCall of toolCalls) {
-      // Derive tool + action names using the same helper executeTool uses
-      let toolNameLabel = 'unknown';
-      try {
-        const { tool, action } = parseFunctionCall(toolCall);
-        toolNameLabel = action ? `${tool}.${action}` : tool;
-      } catch (e) {
-        // If parsing fails here, executeTool will also fail; keep label as 'unknown'
-      }
-
-      try {
-        const result = await this.executeTool(toolCall, context);
-        results.push({
-          toolCallId: toolCall.id || null,
-          toolName: toolNameLabel,
-          result,
-          success: true,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (error) {
-        results.push({
-          toolCallId: toolCall.id || null,
-          toolName: toolNameLabel,
-          error: error.message,
-          success: false,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
-
-    return results;
+    return executeToolCalls(this.tools, toolCalls, context);
   }
 
   /**
@@ -104,30 +69,7 @@ class BaseAgent {
    * @returns {Promise<any>} Tool execution result
    */
   async executeTool(toolCall, context) {
-    // Normalize tool call shape using functionDefinitions.parseFunctionCall
-    const { tool, action, params } = parseFunctionCall(toolCall);
-
-    if (!this.tools || !this.tools[tool]) {
-      throw new Error(`Tool "${tool}" not found in agent's tool registry`);
-    }
-
-    const toolInstance = this.tools[tool];
-    const fn = toolInstance && typeof toolInstance[action] === 'function'
-      ? toolInstance[action].bind(toolInstance)
-      : null;
-
-    if (!fn) {
-      throw new Error(`Tool "${tool}" action "${action}" is not callable`);
-    }
-
-    // Add context to tool arguments
-    const toolArgs = { ...params, context };
-
-    try {
-      return await fn(toolArgs);
-    } catch (error) {
-      throw new Error(`Tool "${tool}_${action}" execution failed: ${error.message}`);
-    }
+    return executeToolCall(this.tools, toolCall, context);
   }
 
   /**

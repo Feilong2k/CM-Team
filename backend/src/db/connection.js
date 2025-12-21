@@ -12,8 +12,13 @@ let pool = null;
  */
 function getPool() {
   if (!pool) {
+    const connectionString =
+      process.env.NODE_ENV === 'test' && process.env.DATABASE_URL_TEST
+        ? process.env.DATABASE_URL_TEST
+        : process.env.DATABASE_URL;
+
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString,
       max: parseInt(process.env.PG_MAX, 10) || 10,
       min: parseInt(process.env.PG_MIN, 10) || 0,
       idleTimeoutMillis: parseInt(process.env.PG_IDLE_TIMEOUT_MS, 10) || 10000,

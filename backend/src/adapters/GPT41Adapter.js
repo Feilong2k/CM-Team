@@ -58,7 +58,7 @@ class GPT41Adapter extends LLMAdapter {
    * @returns {Promise<Object>} The AI's response and tool calls
    */
   async sendMessages(messages, options = {}) {
-    const { stream = false, tools = null } = options;
+    const { stream = false, tools = null, max_tokens, temperature } = options;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new Error('messages must be a non-empty array');
@@ -91,6 +91,9 @@ class GPT41Adapter extends LLMAdapter {
       })),
       stream,
     };
+
+    if (max_tokens !== undefined) body.max_tokens = max_tokens;
+    if (temperature !== undefined) body.temperature = temperature;
 
     // Pass tools through so GPT-4.1 can return structured tool_calls
     if (tools && Array.isArray(tools) && tools.length > 0) {
@@ -160,7 +163,7 @@ class GPT41Adapter extends LLMAdapter {
    * @returns {AsyncGenerator<Object>} Stream of chunks with chunk content or tool calls
    */
   async *sendMessagesStreaming(messages, options = {}) {
-    const { tools = null } = options;
+    const { tools = null, max_tokens, temperature } = options;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new Error('messages must be a non-empty array');
@@ -191,6 +194,9 @@ class GPT41Adapter extends LLMAdapter {
       })),
       stream: true,
     };
+
+    if (max_tokens !== undefined) body.max_tokens = max_tokens;
+    if (temperature !== undefined) body.temperature = temperature;
 
     if (tools && Array.isArray(tools) && tools.length > 0) {
       body.tools = tools;

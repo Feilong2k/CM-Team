@@ -272,36 +272,61 @@ const handleSendMessage = async (messageText) => {
   }
 
   try {
-    await streamOrionReply(endpoint, payload, {
-      onChunk: (chunk) => {
-        if (aiMessage) {
-          aiMessage.content += chunk
-          aiMessage.html = renderMarkdown(aiMessage.content)
+    if (currentMode.value === 'plan') {
+      // PLAN mode: use streaming SSE (no tools today)
+      await streamOrionReply(endpoint, payload, {
+        onChunk: (chunk) => {
+          if (aiMessage) {
+            aiMessage.content += chunk
+            aiMessage.html = renderMarkdown(aiMessage.content)
+          }
+        },
+        onDone: (fullContent) => {
+          if (aiMessage) {
+            // Ensure content is consistent
+            aiMessage.content = fullContent 
+            aiMessage.html = renderMarkdown(fullContent)
+            aiMessage.isStreaming = false
+          }
+        },
+        onError: (errorMsg) => {
+          if (aiMessage) {
+            aiMessage.isStreaming = false
+            aiMessage.content += `\n\n**Error**: ${errorMsg}`
+            aiMessage.html = renderMarkdown(aiMessage.content)
+          }
+          console.error('Streaming error:', errorMsg)
         }
-      },
-      onDone: (fullContent) => {
-        if (aiMessage) {
-          // Ensure content is consistent
-          aiMessage.content = fullContent 
-          aiMessage.html = renderMarkdown(fullContent)
-          aiMessage.isStreaming = false
-        }
-      },
-      onError: (errorMsg) => {
-        if (aiMessage) {
-          aiMessage.isStreaming = false
-          aiMessage.content += `\n\n**Error**: ${errorMsg}`
-          aiMessage.html = renderMarkdown(aiMessage.content)
-        }
-        console.error('Streaming error:', errorMsg)
+      })
+    } else {
+      // ACT mode: one-shot JSON response so Orion can execute tools via DatabaseTool
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText)
+        throw new Error(`HTTP ${response.status}: ${errorText}`)
       }
-    })
+
+      const data = await response.json()
+      if (aiMessage) {
+        const content = data.message || ''
+        aiMessage.content = content
+        aiMessage.html = renderMarkdown(content)
+        aiMessage.isStreaming = false
+      }
+    }
   } catch (error) {
-    console.error('Error starting stream:', error)
+    console.error('Error sending message:', error)
     if (aiMessage) {
       aiMessage.isStreaming = false
-      aiMessage.content = 'Error: Failed to get response from Orion.'
-      aiMessage.html = renderMarkdown('**Error**: Failed to get response from Orion.')
+      aiMessage.content = `Error: Failed to get response from Orion.\n\n**Details**: ${error.message || error}`
+      aiMessage.html = renderMarkdown(aiMessage.content)
     }
   }
 }

@@ -1,29 +1,19 @@
 const BaseAgent = require('./BaseAgent');
 const path = require('path');
 const fs = require('fs');
-const { listFiles } = require('../../tools/list_files'); // Assuming this tool exists or I need to create/import it. 
-// Wait, I should check where list_files is defined. It's likely in backend/tools/list_files.js
+const { listFiles } = require('../../tools/list_files');
 const functionDefinitions = require('../../tools/functionDefinitions');
+const TraceService = require('../services/trace/TraceService');
+const { TRACE_TYPES, TRACE_SOURCES } = require('../services/trace/TraceEvent');
 
 /**
  * OrionAgent - The orchestrator agent that extends BaseAgent.
  * Handles context building, logging, and conversation management.
  */
 class OrionAgent extends BaseAgent {
-  /**
-   * Constructor for OrionAgent
-   * @param {Object} adapter - Model adapter that implements LLMAdapter interface
-   * @param {Object} tools - Tool map for this agent (e.g., { DatabaseTool, FileSystemTool })
-   * @param {string} [promptPath] - Optional custom path to the Orion prompt file
-   */
   constructor(adapter, tools, promptPath = null) {
-    // BaseAgent will store the tools map on this.tools
     super(adapter, tools, 'Orion');
-    
-    // Convenience alias for DB-specific operations (chat messages, etc.)
-    // Prefer the raw DatabaseTool instance when exposed as DatabaseToolInternal
-    // in the tools registry so that agent-level adapters do not interfere with
-    // chatMessages.* helpers or other internal DB usage.
+
     if (tools && tools.DatabaseToolInternal) {
       this.db = tools.DatabaseToolInternal;
     } else if (tools && tools.DatabaseTool) {
@@ -31,11 +21,10 @@ class OrionAgent extends BaseAgent {
     } else {
       this.db = tools;
     }
-    
-    // Load Orion prompt from file
+
     const defaultPromptPath = path.join(__dirname, '../../../.Docs/Prompts/SystemPrompt_Orion.md');
     this.promptPath = promptPath || defaultPromptPath;
-    
+
     try {
       this.promptContent = fs.readFileSync(this.promptPath, 'utf8');
       this.promptFile = path.basename(this.promptPath);
@@ -179,7 +168,7 @@ class OrionAgent extends BaseAgent {
    */
   async process(projectId, userMessage, options = {}) {
     const { mode = 'plan' } = options;
-    
+
     if (!projectId || !userMessage) {
       throw new Error('projectId and userMessage are required');
     }
@@ -194,7 +183,6 @@ class OrionAgent extends BaseAgent {
     let toolCallResults = [];
 
     try {
-      // Prepare request (store user message, build context, format messages)
       const { messages, context } = await this._prepareRequest(projectId, userMessage, options);
 
       let continueLoop = true;
@@ -204,42 +192,32 @@ class OrionAgent extends BaseAgent {
       while (continueLoop && iteration < maxIterations) {
         iteration++;
 
-        // Sanitize messages before sending to adapter to avoid malformed entries
         const safeMessages = messages
           .filter(m => m && typeof m === 'object' && typeof m.role === 'string' && typeof m.content === 'string')
           .map(m => ({ role: m.role, content: m.content }));
 
-        // Send messages to adapter
         const adapterResponse = await this.adapter.sendMessages(safeMessages, {
           temperature: mode === 'plan' ? 0.7 : 0.3,
-          max_tokens: 4000,
-          // Pass OpenAI-style function definitions to the adapter so GPT/DeepSeek can
-          // return structured tool_calls. Actual tool execution is handled by
-          // BaseAgent using this.tools (from registry).
+          max_tokens: 8192,
           tools: functionDefinitions
         });
 
-        // Adapter response expected to be { content, toolCalls }
         const { content, toolCalls } = adapterResponse;
 
         responseContent = content;
 
-        // Store Orion's response
         if (this.db.chatMessages && typeof this.db.chatMessages.addMessage === 'function') {
-          // Generate a unique ID for the response to avoid unique constraint violation on external_id
           const responseId = `${projectId}-response-${Date.now()}`;
           await this.db.chatMessages.addMessage(responseId, 'orion', content, {
             mode,
             model: this.getModelName(),
-            tokens: 0 // TODO: Extract tokens from adapter response if available
+            tokens: 0
           });
         }
 
         if (toolCalls && toolCalls.length > 0) {
-          // Execute tool calls using BaseAgent's handleToolCalls
           toolCallResults = await this.handleToolCalls(toolCalls, context);
 
-          // Append tool call results to messages for next iteration
           for (const result of toolCallResults) {
             messages.push({
               role: 'system',
@@ -251,9 +229,6 @@ class OrionAgent extends BaseAgent {
         }
       }
 
-      // Fallback: if the model never produced any natural-language content but
-      // tools did run, surface the raw tool results so the user still sees
-      // something useful rather than an empty message.
       if ((!responseContent || responseContent.trim() === '') && toolCallResults && toolCallResults.length > 0) {
         responseContent = toolCallResults
           .map(result => {
@@ -279,7 +254,6 @@ class OrionAgent extends BaseAgent {
           processingTime: Date.now() - startTime
         }
       };
-
     } catch (error) {
       console.error('OrionAgent process error:', error);
       await this.logError(projectId, error, { userMessage, mode });
@@ -366,17 +340,14 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}
    * @returns {AsyncGenerator<Object>} Stream of chunks and events
    */
   async *processStreaming(projectId, userMessage, options = {}) {
-    // Prepare request (store user message, build context, format messages)
     const { messages, context, mode } = await this._prepareRequest(projectId, userMessage, options);
 
-    // Call the adapter's streaming method
     const adapterStream = this.adapter.sendMessagesStreaming(messages, {
       temperature: mode === 'plan' ? 0.7 : 0.3,
-      max_tokens: 4000,
+      max_tokens: 8192,
       tools: require('../../tools/functionDefinitions')
     });
 
-    // Yield each event from the adapter stream
     for await (const event of adapterStream) {
       yield event;
     }

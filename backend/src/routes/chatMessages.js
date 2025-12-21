@@ -1,5 +1,53 @@
 const express = require('express');
 const router = express.Router();
+const TraceService = require('../services/trace/TraceService');
+const { TRACE_TYPES, TRACE_SOURCES } = require('../services/trace/TraceEvent');
+
+function redactDetails(details) {
+  // Implement redaction logic based on DEV_TRACE_EVENT_MODEL.md
+  // For now, return details as is (to be improved)
+  return details;
+}
+
+router.post('/', async (req, res, next) => {
+  // Existing chat message handling logic here...
+
+  // After user message received
+  try {
+    const userTraceEvent = {
+      projectId: req.body.projectId,
+      type: TRACE_TYPES.USER_MESSAGE,
+      source: TRACE_SOURCES.USER,
+      timestamp: Date.now(),
+      summary: `User message: ${req.body.message?.slice(0, 50)}`,
+      details: redactDetails({ message: req.body.message }),
+      requestId: req.body.requestId,
+    };
+    await TraceService.logEvent(userTraceEvent);
+  } catch (err) {
+    console.error('Trace logging failed for user message:', err);
+  }
+
+  // After Orion response sent
+  // Assuming Orion response is available as orionResponse
+  // This is a placeholder, actual integration depends on existing code
+  try {
+    const orionTraceEvent = {
+      projectId: req.body.projectId,
+      type: TRACE_TYPES.ORION_RESPONSE,
+      source: TRACE_SOURCES.ORION,
+      timestamp: Date.now(),
+      summary: `Orion response: ${orionResponse?.slice(0, 50)}`,
+      details: redactDetails({ response: orionResponse }),
+      requestId: req.body.requestId,
+    };
+    await TraceService.logEvent(orionTraceEvent);
+  } catch (err) {
+    console.error('Trace logging failed for Orion response:', err);
+  }
+});
+
+module.exports = router;
 const { query } = require('../db/connection');
 const OrionAgent = require('../agents/OrionAgent');
 const { getToolsForRole } = require('../../tools/registry');

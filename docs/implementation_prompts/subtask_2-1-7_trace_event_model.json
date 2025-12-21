@@ -1,0 +1,108 @@
+{
+  "task_id": "2-1",
+  "title": "B1 – Define trace event model for Orion interactions",
+  "status": "pending",
+  "workflow_stage": "orion_planning",
+  "basic_info": {
+    "goal": "Design a minimal trace schema for app ↔ Orion ↔ tools.",
+    "area": "Trace Dashboard",
+    "notes": "Cover user messages, LLM calls, tool invocations, and responses."
+  },
+  "instruction": {
+    "overview": "Define a minimal, consistent TraceEvent model and API response shape that describes interactions between the app, Orion, and tools. B1 does not implement storage or HTTP routes; it locks in the contract that B2 (backend logging + API) and B3 (frontend dashboard) will rely on.",
+    "technical_details": {
+      "trace_event_fields": [
+        "id: opaque unique identifier (string or number); must be stable for a stored event.",
+        "timestamp: ISO 8601 string in UTC when the event occurred.",
+        "projectId: project external id (e.g., 'P1'); required for all events exposed via the API.",
+        "source: one of 'user', 'orion', 'tool', 'system'; indicates who/what produced the event.",
+        "type: coarse-grained category, e.g. 'user_message', 'orion_response', 'tool_call', 'tool_result', 'llm_call', 'llm_result', 'system_error'.",
+        "direction: for transport-like events, one of 'inbound' | 'outbound' | 'internal'; optional for pure internal events.",
+        "toolName: optional string for tool-related events (e.g. 'DatabaseTool', 'FileSystemTool').",
+        "requestId: optional correlation id tying a sequence of events for a single chat turn or request.",
+        "summary: short human-readable description (one line) suitable for list views.",
+        "details: structured JSON payload with additional metadata; may include redacted payload snippets.",
+        "error: optional object with { message, code? } when the event represents or includes an error.",
+        "metadata: optional JSON blob for implementation-specific fields (kept small enough for API responses)."
+      ],
+      "event_sources": [
+        "chatMessages route: emits events for inbound user messages and outbound Orion responses.",
+        "OrionAgent: emits events around LLM calls, tool orchestration, and decision points.",
+        "DatabaseToolAgentAdapter and FileSystemTool: emit tool_call and tool_result events with sanitized arguments/results.",
+        "(Optional for later) streaming layer: emits streaming-specific events such as 'stream_started', 'stream_chunk', 'stream_completed', 'stream_error'."
+      ],
+      "api_contract_stub": {
+        "endpoint": "GET /api/trace/logs",
+        "query_params": [
+          "projectId (required for now): external project id, e.g. 'P1'.",
+          "type (optional): filter by event type, e.g. 'user_message', 'tool_call'.",
+          "source (optional): filter by 'user' | 'orion' | 'tool' | 'system'.",
+          "limit (optional): positive integer, default 50, max 200.",
+          "offset (optional): non-negative integer for pagination."
+        ],
+        "response_shape_example": {
+          "events": "Array of TraceEvent objects in the chosen order (B2 will decide ordering, but B1 must state the field set).",
+          "total": "Optional total count if available (or null when not cheaply computable)."
+        }
+      }
+    },
+    "acceptance_criteria": [
+      "TraceEvent field list is documented in a single place (DEV note or JSDoc) that B2 and B3 can import or reference.",
+      "There is a clear mapping from major interaction points (chat route, OrionAgent, tool adapters) to event types and sources.",
+      "Tara can write api_trace.spec.js tests that assert response objects include at least the fields defined in TraceEvent (id, timestamp, projectId, source, type, summary, details/metadata).",
+      "The proposed design does not require changes to existing layering rules (routes → controllers → services → models); it can be slotted in as a separate service/module in B2.",
+      "Sensitive payloads (e.g., raw DB contents, file contents, secrets) are either summarized or redacted in TraceEvent.details so tests can assert on safe shapes without leaking secrets."
+    ],
+    "edge_cases": [
+      "Events representing failures (tool errors, LLM errors, DB failures in trace logging) must still produce a TraceEvent with an error field that Tara can assert on.",
+      "Very large payloads (e.g., long prompts, huge tool results) should not be fully exposed in the API; only short summaries or truncated snippets should appear in details.",
+      "Events that do not naturally belong to a project (e.g., global system errors) should either be linked to a synthetic projectId (like 'SYSTEM') or explicitly considered out of scope for Feature 2.",
+      "Future streaming-specific events must be representable without changing the core TraceEvent shape (e.g., via type + metadata)."
+    ],
+    "dependencies": [
+      "Feature 2 overall architecture (chatMessages route, OrionAgent, tool adapters) as described in existing Feature 2 implementation requirements.",
+      "PostgreSQL as the underlying store, but B1 remains DB-agnostic and only defines logical fields, not exact table DDL (B2 will map TraceEvent to tables).",
+      "Existing layering rules and module boundaries in backend/src (routes, services, tools)."
+    ],
+    "decisions_locked": [
+      "TraceEvent must include at least: id, timestamp, projectId, source, type, summary, details/metadata, and optional toolName and error.",
+      "The primary filter dimension for the API is projectId; all events surfaced by /api/trace/logs must be scoped by project.",
+      "No raw secrets or full payloads (e.g., entire SQL queries with params, full file contents, full prompts) should be exposed directly in the trace API; only summaries or redacted forms are allowed.",
+      "Ordering and pagination details (e.g., most-recent-first vs oldest-first) are left to B2 to finalize, but B1 assumes a stable, deterministic ordering that Tara can assert on.",
+      "The trace system is designed as an additive observability layer and must not change the behavior of existing chat or tool flows when disabled or degraded."
+    ],
+    "tara": {
+      "goal": "Specify the observable behavior and shape of trace events as exposed via the future /api/trace/logs endpoint, so tests in B2 have a clear contract to target.",
+      "steps": [
+        "Create or extend backend/src/_test_/api_trace.spec.js (file name may be adjusted to match existing conventions).",
+        "In that spec, write a top-level description comment summarizing the TraceEvent contract as defined here (fields, filtering, redaction expectations).",
+        "Design test cases that call a hypothetical GET /api/trace/logs?projectId=P1 endpoint and assert that each returned event object includes the TraceEvent core fields (id, timestamp, projectId, source, type, summary, details or metadata).",
+        "Add a test case that assumes filtering by type and/or source is available (e.g., only 'user_message' events) and verify via expectations on the type/source fields. The test can be written in a pending/skip state until B2 wires the route.",
+        "Add a test (or clear TODO) describing how sensitive fields must be handled: e.g., assert that details never contains raw secrets or full payloads, but instead includes short summaries or redacted keys.",
+        "Keep tests focused on the HTTP contract and JSON shape, not on internal storage or table schemas; any DB-specific checks belong to B2’s own tests."
+      ],
+      "tests": [
+        "Spec file exists for /api/trace/logs with at least one describe block documenting the TraceEvent contract.",
+        "Tests (or TODOs with clear descriptions) cover: basic event shape, filtering behavior, and redaction of sensitive data.",
+        "Tests are written in a way that B2 can activate them by simply implementing the route and backing service, without changing the expectations defined here."
+      ]
+    },
+    "devon": {
+      "goal": "Define and document a TraceEvent schema and event taxonomy that other tasks (B2, B3) can implement against without further changes to the contract.",
+      "steps": [
+        "Add a single source of truth for the TraceEvent shape, preferably as a JSDoc-style typedef or comment in a dedicated backend/src/services/trace/TraceEvent.js (or similar) module. This should list each field, its type, and whether it is required or optional.",
+        "In that same module or a nearby DEV note, document the canonical event types (user_message, orion_response, tool_call, tool_result, llm_call, llm_result, system_error, etc.) and which layers are expected to emit each type.",
+        "Write a short DEV note (e.g., docs/ or backend/DEV_TRACE_EVENT_MODEL.md) describing the lifecycle of a typical trace sequence for one chat turn: user_message → llm_call → tool_call(s) → tool_result(s) → orion_response. Explicitly show how requestId and projectId tie these together.",
+        "For each emitting layer (chatMessages route, OrionAgent, DatabaseToolAgentAdapter, FileSystemTool), document in comments which TraceEvent fields they will populate (e.g., toolName, summary patterns, metadata snippets). Do not implement the emission yet; only define expectations.",
+        "Ensure the design can be implemented within existing layering rules: routes should not reach directly into DB tables for trace; instead, B2 will introduce a trace service that all emitters can call.",
+        "Review the design against B2 and B3 requirements to confirm that no additional fields are needed for the dashboard (e.g., enough data to render a timeline and detail pane without extra queries). If additional fields are required, add them now to TraceEvent rather than later."
+      ],
+      "notes": [
+        "Avoid introducing concrete table or index names here; B2 will handle physical schema. Focus B1 on the logical event model and API contract.",
+        "Keep examples generic and free of secrets; when showing example details payloads, use obviously fake values and highlight where redaction would occur.",
+        "Align naming (field names, event types) with existing terminology in OrionAgent and DatabaseToolAgentAdapter to reduce mental overhead for future maintainers."
+      ]
+    }
+  },
+  "reason": "F2-T1-S2: Foundation for pop-out trace dashboard."
+}

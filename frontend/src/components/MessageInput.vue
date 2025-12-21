@@ -4,12 +4,11 @@
       <textarea
         ref="textareaRef"
         v-model="inputText"
-        :rows="currentRows"
+        rows="1"
         @keydown="handleKeydown"
         @input="adjustHeight"
-        class="flex-grow bg-transparent text-gray-200 resize-none outline-none placeholder-gray-500 overflow-y-auto align-top"
+        class="flex-grow bg-transparent text-gray-200 resize-none outline-none placeholder-gray-500 overflow-y-hidden align-top"
         :placeholder="placeholder"
-        :max-rows="3"
       />
       <button
         @click="sendMessage"
@@ -23,7 +22,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 
 const props = defineProps({
   placeholder: {
@@ -41,8 +40,6 @@ const emit = defineEmits(['send', 'update:modelValue'])
 const textareaRef = ref(null)
 const inputText = ref(props.modelValue)
 
-const currentRows = ref(1)
-
 const handleKeydown = (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
@@ -54,27 +51,49 @@ const handleKeydown = (event) => {
 const adjustHeight = () => {
   emit('update:modelValue', inputText.value)
   
-  // Calculate rows based on line breaks
-  const lines = inputText.value.split('\n').length
-  currentRows.value = Math.min(Math.max(lines, 1), 3)
-  
-  // Also adjust the textarea height via CSS (handled by rows attribute)
+  const textarea = textareaRef.value
+  if (textarea) {
+    // Reset height to shrink if text was deleted
+    textarea.style.height = 'auto'
+    
+    // Get line height to calculate max height
+    const style = window.getComputedStyle(textarea)
+    const lineHeight = parseFloat(style.lineHeight)
+    // If line-height is 'normal', approximate it (usually 1.2 * fontSize)
+    const computedLineHeight = isNaN(lineHeight) ? parseFloat(style.fontSize) * 1.2 : lineHeight
+    
+    const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    // Max height for 3 lines + padding
+    const maxContentHeight = computedLineHeight * 3
+    
+    const newHeight = Math.min(textarea.scrollHeight, maxContentHeight + padding)
+    textarea.style.height = `${newHeight}px`
+    
+    // Show scrollbar if content exceeds max height
+    textarea.style.overflowY = textarea.scrollHeight > newHeight ? 'auto' : 'hidden'
+  }
 }
 
 const sendMessage = () => {
   if (inputText.value.trim()) {
     emit('send', inputText.value.trim())
     inputText.value = ''
-    currentRows.value = 1
     emit('update:modelValue', '')
+    // Reset height after update
+    nextTick(() => {
+      const textarea = textareaRef.value
+      if (textarea) {
+        textarea.style.height = 'auto'
+        adjustHeight()
+      }
+    })
   }
 }
 
 // Watch for external modelValue changes
-import { watch } from 'vue'
 watch(() => props.modelValue, (newVal) => {
   inputText.value = newVal
-  adjustHeight()
+  nextTick(() => adjustHeight())
 })
 
 onMounted(() => {

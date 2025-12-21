@@ -9,8 +9,8 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "test": "cross-env NODE_ENV=test dotenv -e backend/.env -- npx jest",
-    "test:watch": "jest --watch",
+    "test": "cross-env NODE_ENV=test DOTENV_CONFIG_PATH=.env node -r dotenv/config ./node_modules/jest/bin/jest.js",
+    "test:watch": "cross-env NODE_ENV=test DOTENV_CONFIG_PATH=.env node -r dotenv/config ./node_modules/jest/bin/jest.js --watch",
     "db:migrate": "node scripts/migrate.js",
     "db:migrate:test": "cross-env NODE_ENV=test node scripts/migrate.js"
   },

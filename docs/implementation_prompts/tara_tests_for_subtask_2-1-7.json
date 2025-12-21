@@ -1,0 +1,39 @@
+{
+  "task_id": "2-1",
+  "title": "B1 – Define trace event model for Orion interactions",
+  "tests": [
+    {
+      "description": "Test that the TraceEvent model includes all required fields",
+      "steps": [
+        "Create or extend backend/src/_test_/api_trace.spec.js",
+        "Write a test that calls GET /api/trace/logs?projectId=P1",
+        "Assert that each returned event object includes the fields: id, timestamp, projectId, source, type, summary, details, and metadata."
+      ],
+      "expected_result": "All events returned by the API must conform to the TraceEvent model."
+    },
+    {
+      "description": "Test filtering behavior by event type",
+      "steps": [
+        "Add a test case that calls GET /api/trace/logs?projectId=P1&type=user_message",
+        "Assert that only events of type 'user_message' are returned."
+      ],
+      "expected_result": "The API should return only user_message events."
+    },
+    {
+      "description": "Test redaction of sensitive data in TraceEvent details",
+      "steps": [
+        "Add a test case that simulates a scenario where sensitive data is included in the details field.",
+        "Assert that sensitive data is redacted or summarized."
+      ],
+      "expected_result": "Sensitive data must not be exposed in the API response."
+    },
+    {
+      "description": "Test that events representing failures produce a TraceEvent with an error field",
+      "steps": [
+        "Simulate a failure in the DatabaseTool or LLM API during a trace event.",
+        "Assert that the resulting TraceEvent includes an error field."
+      ],
+      "expected_result": "The TraceEvent must include an error field with appropriate details."
+    }
+  ]
+}

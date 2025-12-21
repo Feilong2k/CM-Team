@@ -1,58 +1,18 @@
 const express = require('express');
 const router = express.Router();
+
+const { query } = require('../db/connection');
+const OrionAgent = require('../agents/OrionAgent');
+const { getToolsForRole } = require('../../tools/registry');
+const { DS_ChatAdapter, GPT41Adapter } = require('../adapters');
+const StreamingService = require('../services/StreamingService');
 const TraceService = require('../services/trace/TraceService');
-const { TRACE_TYPES, TRACE_SOURCES } = require('../services/trace/TraceEvent');
 
 function redactDetails(details) {
   // Implement redaction logic based on DEV_TRACE_EVENT_MODEL.md
   // For now, return details as is (to be improved)
   return details;
 }
-
-router.post('/', async (req, res, next) => {
-  // Existing chat message handling logic here...
-
-  // After user message received
-  try {
-    const userTraceEvent = {
-      projectId: req.body.projectId,
-      type: TRACE_TYPES.USER_MESSAGE,
-      source: TRACE_SOURCES.USER,
-      timestamp: Date.now(),
-      summary: `User message: ${req.body.message?.slice(0, 50)}`,
-      details: redactDetails({ message: req.body.message }),
-      requestId: req.body.requestId,
-    };
-    await TraceService.logEvent(userTraceEvent);
-  } catch (err) {
-    console.error('Trace logging failed for user message:', err);
-  }
-
-  // After Orion response sent
-  // Assuming Orion response is available as orionResponse
-  // This is a placeholder, actual integration depends on existing code
-  try {
-    const orionTraceEvent = {
-      projectId: req.body.projectId,
-      type: TRACE_TYPES.ORION_RESPONSE,
-      source: TRACE_SOURCES.ORION,
-      timestamp: Date.now(),
-      summary: `Orion response: ${orionResponse?.slice(0, 50)}`,
-      details: redactDetails({ response: orionResponse }),
-      requestId: req.body.requestId,
-    };
-    await TraceService.logEvent(orionTraceEvent);
-  } catch (err) {
-    console.error('Trace logging failed for Orion response:', err);
-  }
-});
-
-module.exports = router;
-const { query } = require('../db/connection');
-const OrionAgent = require('../agents/OrionAgent');
-const { getToolsForRole } = require('../../tools/registry');
-const { DS_ChatAdapter, GPT41Adapter } = require('../adapters');
-const StreamingService = require('../services/StreamingService');
 
 const validSenders = ['user', 'orion', 'system'];
 
@@ -67,6 +27,19 @@ function parsePaginationParams(limit, offset) {
     limit: isNaN(parsedLimit) || parsedLimit < 1 ? 50 : parsedLimit,
     offset: isNaN(parsedOffset) || parsedOffset < 0 ? 0 : parsedOffset,
   };
+}
+
+function deriveProjectId(externalId, metadata) {
+  if (metadata && typeof metadata.projectId === 'string' && metadata.projectId.trim() !== '') {
+    return metadata.projectId.trim();
+  }
+  if (typeof externalId === 'string') {
+    const parts = externalId.split('-');
+    if (parts.length > 0 && parts[0]) {
+      return parts[0];
+    }
+  }
+  return undefined;
 }
 
 // Choose adapter based on environment.
@@ -122,8 +95,26 @@ router.post('/messages', async (req, res) => {
     return res.status(400).json({ error: 'Invalid sender value' });
   }
 
+  const projectId = deriveProjectId(external_id, metadata) || 'P1';
+  const requestId = metadata && metadata.requestId ? metadata.requestId : undefined;
+
   try {
     if (sender === 'user') {
+      // Log user message trace event
+      try {
+        await TraceService.logEvent({
+          projectId,
+          type: 'user_message',
+          source: 'user',
+          timestamp: new Date().toISOString(),
+          summary: `User message: ${String(content).slice(0, 80)}`,
+          details: redactDetails({ external_id, content, metadata }),
+          requestId,
+        });
+      } catch (err) {
+        console.error('Trace logging failed for user message:', err);
+      }
+
       // Check if client wants streaming
       const acceptHeader = req.get('Accept') || '';
       const wantsStreaming = acceptHeader.includes('text/event-stream');
@@ -138,13 +129,27 @@ router.post('/messages', async (req, res) => {
         const onComplete = async (fullContent) => {
           try {
             if (fullContent) {
-              // The metadata for the persisted message should include the model and mode
               const model = orionAgent.getModelName ? orionAgent.getModelName() : 'unknown';
-              await streamingService.persistStreamedMessage(
+              const persisted = await streamingService.persistStreamedMessage(
                 external_id, 
                 fullContent, 
                 { model, mode, streamed: true, ...metadata }
               );
+
+              // Log Orion streaming response
+              try {
+                await TraceService.logEvent({
+                  projectId,
+                  type: 'orion_response',
+                  source: 'orion',
+                  timestamp: new Date().toISOString(),
+                  summary: `Orion streaming response (${mode})`,
+                  details: redactDetails({ external_id, content: fullContent, metadata: persisted.metadata }),
+                  requestId,
+                });
+              } catch (traceErr) {
+                console.error('Trace logging failed for Orion streaming response:', traceErr);
+              }
             }
           } catch (persistError) {
             console.error('Failed to persist streamed message:', persistError);
@@ -157,7 +162,36 @@ router.post('/messages', async (req, res) => {
         return;
       } else {
         // Non-streaming response
+        // Optional: log LLM call/result around orionAgent.process
+        try {
+          await TraceService.logEvent({
+            projectId,
+            type: 'llm_call',
+            source: 'system',
+            timestamp: new Date().toISOString(),
+            summary: `LLM call (mode=${mode})`,
+            details: { external_id, mode },
+            requestId,
+          });
+        } catch (traceErr) {
+          console.error('Trace logging failed for llm_call:', traceErr);
+        }
+
         const response = await orionAgent.process(external_id, content, { mode });
+
+        try {
+          await TraceService.logEvent({
+            projectId,
+            type: 'llm_result',
+            source: 'system',
+            timestamp: new Date().toISOString(),
+            summary: `LLM result (mode=${mode})`,
+            details: { external_id, mode, model: orionAgent.getModelName ? orionAgent.getModelName() : 'unknown' },
+            requestId,
+          });
+        } catch (traceErr) {
+          console.error('Trace logging failed for llm_result:', traceErr);
+        }
         
         // Persist the Orion response to database
         await query(
@@ -166,6 +200,21 @@ router.post('/messages', async (req, res) => {
            RETURNING id, external_id, sender, content, metadata, created_at, updated_at`,
           [external_id, 'orion', response.content, { ...response.metadata, mode }]
         );
+
+        // Log Orion response trace event
+        try {
+          await TraceService.logEvent({
+            projectId,
+            type: 'orion_response',
+            source: 'orion',
+            timestamp: new Date().toISOString(),
+            summary: `Orion response (${mode}): ${String(response.content || '').slice(0, 80)}`,
+            details: redactDetails({ external_id, content: response.content, metadata: response.metadata }),
+            requestId,
+          });
+        } catch (traceErr) {
+          console.error('Trace logging failed for Orion response:', traceErr);
+        }
         
         return res.status(200).json({
           message: response.content,

@@ -1,44 +1,96 @@
-e<template>
-  <div class="flex h-screen bg-black text-neon-blue font-mono">
-    <!-- Left Panel: Chat Terminal -->
-    <div class="w-1/2 border-r border-[#333333] overflow-hidden">
-      <ChatPanel @send="handleSendMessage" />
-    </div>
+<template>
+  <div class="flex h-screen bg-black text-neon-blue font-mono overflow-hidden">
+    <!-- Layout when trace dashboard is hidden: Chat (1/2) + Project Console (1/2) -->
+    <template v-if="!traceVisible">
+      <!-- Left Panel: Chat Terminal -->
+      <div class="relative w-1/2 border-r border-[#333333] overflow-hidden">
+        <ChatPanel @send="handleSendMessage" />
 
-    <!-- Right Panel: Project Console -->
-    <div data-testid="workflow-panel" class="w-1/2 bg-[#0a0a0a] overflow-hidden flex flex-col p-4">
-      <!-- Project header -->
-      <div class="mb-6">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-lg text-neon-blue">Project Console</h2>
-          <select data-testid="project-selector" class="bg-[#111111] text-neon-blue border border-[#333333] rounded px-3 py-1 text-sm">
-            <option value="P-000">Default Project</option>
-          </select>
-        </div>
-        <div class="flex items-center">
-          <span class="text-neon-blue mr-3 text-sm">P-000</span>
-          <p class="text-gray-400 text-xs">Initial project for MVP</p>
-        </div>
+        <!-- Trace dashboard toggle arrow -->
+        <button
+          type="button"
+          data-testid="trace-toggle"
+          class="absolute top-1/2 -right-2 transform -translate-y-1/2 bg-[#111111] border border-[#444444] rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-[#1a1a1a]"
+          @click="toggleTrace"
+          title="Show Trace Dashboard"
+        >
+          ≡
+        </button>
       </div>
 
-      <!-- Features, Tasks, and Subtasks Tree -->
-      <div class="flex-1 overflow-y-auto border border-[#333333] rounded p-4">
-        <FeatureTree :features="features" @update:features="updateFeatures" />
+      <!-- Right Panel: Project Console -->
+      <div
+        data-testid="workflow-panel"
+        class="w-1/2 bg-[#0a0a0a] overflow-hidden flex flex-col p-4"
+      >
+        <!-- Project header -->
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg text-neon-blue">Project Console</h2>
+            <select
+              data-testid="project-selector"
+              class="bg-[#111111] text-neon-blue border border-[#333333] rounded px-3 py-1 text-sm"
+              v-model="currentProjectId"
+            >
+              <option value="P1">P1</option>
+            </select>
+          </div>
+          <div class="flex items-center">
+            <span class="text-neon-blue mr-3 text-sm">{{ currentProjectId }}</span>
+            <p class="text-gray-400 text-xs">Initial project for MVP</p>
+          </div>
+        </div>
+
+        <!-- Features, Tasks, and Subtasks Tree -->
+        <div class="flex-1 overflow-y-auto border border-[#333333] rounded p-4">
+          <FeatureTree :features="features" @update:features="updateFeatures" />
+        </div>
       </div>
-    </div>
+    </template>
+
+    <!-- Layout when trace dashboard is visible: Chat (1/3) + Trace Timeline/Details (2/3), Project Console hidden -->
+    <template v-else>
+      <!-- Left Panel: Chat Terminal (1/3) -->
+      <div class="relative w-1/3 border-r border-[#333333] overflow-hidden">
+        <ChatPanel @send="handleSendMessage" />
+
+        <!-- Trace dashboard toggle arrow -->
+        <button
+          type="button"
+          data-testid="trace-toggle"
+          class="absolute top-1/2 -right-2 transform -translate-y-1/2 bg-[#111111] border border-[#444444] rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-[#1a1a1a]"
+          @click="toggleTrace"
+          title="Hide Trace Dashboard"
+        >
+          ×
+        </button>
+      </div>
+
+      <!-- Right: Trace Timeline + Details (2/3) -->
+      <div class="w-2/3 overflow-hidden">
+        <TraceDashboard :project-id="currentProjectId" />
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup>
+import { ref, watch, onMounted } from 'vue'
 import ChatPanel from './components/ChatPanel.vue'
 import FeatureTree from './components/FeatureTree.vue'
-import { ref, watch } from 'vue'
+import TraceDashboard from './components/TraceDashboard.vue'
+
+const traceVisible = ref(false)
+const currentProjectId = ref('P1')
+
 const handleSendMessage = (message) => {
   console.log('Message sent:', message)
   // For now, just log. In a real app, this would be sent to the backend.
 }
 
-import { onMounted } from 'vue'
+const toggleTrace = () => {
+  traceVisible.value = !traceVisible.value
+}
 
 const features = ref([])
 
@@ -65,11 +117,11 @@ const updateFeatures = (newFeatures) => {
 watch(
   () => features.value.map(f => f.status),
   () => {
-    features.value.forEach((feature, fIndex) => {
+    features.value.forEach((feature) => {
       if (feature.status === 'in progress' && !feature.expanded) {
         feature.expanded = true
       }
-      feature.tasks.forEach((task, tIndex) => {
+      feature.tasks.forEach((task) => {
         if (task.status === 'in progress' && !task.expanded) {
           task.expanded = true
         }

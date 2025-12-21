@@ -9,13 +9,26 @@ let events = [];
 
 /**
  * Log a TraceEvent.
+ * Ensures each event has a stable id and timestamp so UIs can key and select correctly.
  * @param {import('./TraceEvent').TraceEvent} event
  */
 async function logEvent(event) {
   if (!event || typeof event !== 'object') return;
 
   const base = createTraceEventShape();
+  const now = new Date().toISOString();
   const merged = { ...base, ...event };
+
+  // Ensure a unique id if caller didn't provide one
+  if (!merged.id) {
+    merged.id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  // Ensure a string timestamp if caller didn't provide one
+  if (!merged.timestamp) {
+    merged.timestamp = now;
+  }
+
   events.push(merged);
 }
 

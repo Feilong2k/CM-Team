@@ -334,3 +334,147 @@
   - Log trace events for tool calls.
   - Display trace logs in a basic dashboard between Chat and Project Console.
 - We have a clear roadmap for streaming tool support and richer tracing/debugging (captured in `.Docs/Orion_Tool_Execution_Guide.md`).
+
+---
+
+## 8. Trace + Tools Debugging with Orion (late 2025-12-21)
+
+### 8.1 Cleaning up streaming trace noise
+**Files:**
+- `backend/src/adapters/DS_ChatAdapter.js`
+
+**Changes:**
+- Removed `llm_stream_chunk` trace logging from `sendMessagesStreaming`.
+  - Previously, every DeepSeek SSE delta emitted a `llm_stream_chunk` TraceEvent, which flooded the Trace Dashboard and pushed out important `tool_call` / `tool_result` / `llm_result` / `orion_response` events.
+  - Now streaming still works for PLAN mode, but no longer generates `llm_stream_chunk` events.
+
+**Why:**
+- Trace dashboard was effectively unusable on long chats because the timeline filled up with low‑value streaming chunks.
+- For debugging, higher-value events (user/tool/LLM/orion) are more important.
+
+---
+
+### 8.2 Verifying and instrumenting DatabaseTool calls
+**Files:**
+- `backend/tools/DatabaseTool.js`
+- `backend/tools/DatabaseToolAgentAdapter.js`
+
+**Changes:**
+- Added explicit logging inside `DatabaseTool.get_subtask_full_context`:
+  - On entry:
+    ```js
+    console.log('[DatabaseTool] get_subtask_full_context called', { subtask_id, projectId });
+    ```
+  - After resolving the subtask:
+    ```js
+    console.log('[DatabaseTool] get_subtask_full_context resolved', {
+      subtask_external_id: subtask.external_id,
+      status: subtask.status,
+      workflow_stage: subtask.workflow_stage,
+    });
+    ```
+- Refined `DatabaseToolAgentAdapter` to:
+  - Resolve a **real instance** of DatabaseTool (not the class constructor), so calls like `get_subtask_full_context` actually hit the live DB tool.
+  - Log `tool_result` events for both **success** and **error**:
+    - On success: `details: { ok, hasSubtask, result }`.
+    - On error: `details: { ok: false, error: message }` and an `error` field for the trace UI.
+
+**Why:**
+- Confirmed that tool_calls from Orion **do** reach the DB layer and return real data (e.g., status + workflow_stage for subtasks 2-1-7 and 2-1-8).
+- Ensured the trace timeline has both the `tool_call` inputs and the `tool_result` payloads.
+
+---
+
+### 8.3 Fixing DS_ChatAdapter validation crashes
+**Files:**
+- `backend/src/adapters/DS_ChatAdapter.js`
+- `backend/src/agents/OrionAgent.js`
+
+**Issue:**
+- DS_ChatAdapter was throwing:
+  > `Each message must be an object with role and content`
+
+This happened when Orion’s internal `messages` array accumulated malformed / empty system messages across iterations.
+
+**Fix:**
+- In `OrionAgent.process`, before calling `adapter.sendMessages`, we now filter messages:
+  ```js
+  const safeMessages = messages
+    .filter(m =>
+      m &&
+      typeof m === 'object' &&
+      typeof m.role === 'string' &&
+      typeof m.content === 'string' &&
+      m.content.trim() !== ''
+    )
+    .map(m => ({ role: m.role, content: m.content }));
+  ```
+- This prevents empty/invalid entries from ever reaching DS_ChatAdapter.
+
+**Result:**
+- ACT-mode requests no longer crash the adapter due to bad history entries, allowing Orion to make the second LLM call after tools.
+
+---
+
+### 8.4 Surfacing tool results back to the model (without hard-coding policy)
+**Files:**
+- `backend/src/agents/OrionAgent.js`
+- `.Docs/Prompts/SystemPrompt_Orion.md`
+
+**Changes in OrionAgent:**
+- After `ToolRunner.executeToolCalls` returns `toolCallResults`, we now push **only the raw tool JSON** as a system message:
+  ```js
+  for (const result of toolCallResults) {
+    const toolLabel = result.toolName || 'tool';
+    const resultJson = JSON.stringify(result.result);
+
+    messages.push({
+      role: 'system',
+      content: `Tool ${toolLabel} returned the following data (from the database or filesystem):\n${resultJson}`
+    });
+  }
+  ```
+- We **removed** the earlier hard-coded policy text from the agent (how to answer, avoid re-calls, etc.) and moved that behavior into Orion’s system prompt instead.
+
+**Changes in SystemPrompt_Orion:**
+- Added **Post-Tool Answering Policy**:
+  - Always answer explicitly from the tool result.
+  - Always mention `status` and `workflow_stage` when available.
+  - Avoid repeated tool calls for the same id in a single turn; reuse the existing result instead.
+  - Be transparent about which tool was used.
+- Updated **Failure & Recovery Protocol** to document infra-level retries:
+  - The backend automatically retries each tool_call **up to 3 times**.
+  - If all attempts fail, Orion should not keep re-calling the same tool; instead use the error to decide the next step.
+
+**Why:**
+- Keeps **policy in prompts** (easier to tune) and **plumbing in code**.
+- Aligns Orion’s behavior with the trace + retry infrastructure we built.
+
+---
+
+### 8.5 ToolRunner retry semantics
+**File:**
+- `backend/tools/ToolRunner.js`
+
+**Changes:**
+- Implemented a per-tool_call retry loop in `executeToolCalls`:
+  - For each tool_call from the LLM:
+    - Try to execute it.
+    - On failure, retry up to **3 attempts**.
+    - Record `{ success, attempts, result|error, timestamp }` for Orion.
+- Retried attempts are **infra-level** and do not generate extra `tool_call` events in the trace; the trace still shows a single `tool_call` and one or more `tool_result` entries depending on adapter logging.
+
+**Why:**
+- Smooths over transient DB or tool flakiness without forcing Orion (the LLM) to reason about low-level retry loops.
+- Combined with the SystemPrompt guidance, this should reduce unnecessary repeated tool_calls for the same id.
+
+---
+
+### 8.6 Observations & Remaining Work
+- Tools, traces, and adapter plumbing are now in a much better place:
+  - DB calls are clearly visible in logs and trace events.
+  - Streaming trace noise is reduced.
+  - Infra handles per-call retries.
+  - Orion is instructed (via prompt) to answer directly from tool results and avoid redundant calls.
+- Remaining improvement area:
+  - Add a per-turn de-duplication layer (e.g., cache of `(tool, id)` → result) so that even if the LLM asks for the same tool/id multiple times, the agent can reuse the first result instead of hitting the DB again.

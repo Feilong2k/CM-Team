@@ -71,7 +71,6 @@ class OrionAgent extends BaseAgent {
       // For MVP, we'll list top-level relevant directories recursively.
       try {
         const rootDir = process.cwd(); // Assuming we are in project root or backend
-        // We need to be careful about where cwd is.
         // If cwd is c:\\Coding\\CM-TEAM, then backend is a subdir.
         
         // Simple recursive list implementation for whitelisted dirs
@@ -81,8 +80,6 @@ class OrionAgent extends BaseAgent {
         for (const dir of whitelist) {
             const fullPath = path.join(rootDir, dir);
             if (fs.existsSync(fullPath)) {
-                // Use the listFiles tool logic if possible, or just a simple recursive walk
-                // Here we'll do a simple walk for now to populate file names
                 const walk = (dirPath) => {
                     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
                     for (const entry of entries) {
@@ -192,8 +189,18 @@ class OrionAgent extends BaseAgent {
       while (continueLoop && iteration < maxIterations) {
         iteration++;
 
+        // Filter out any malformed or empty messages before passing to the adapter.
+        // DS_ChatAdapter enforces that each message must have both a role and
+        // non-empty content; previous empty Orion responses (e.g., from failed
+        // tool runs) can otherwise poison subsequent turns.
         const safeMessages = messages
-          .filter(m => m && typeof m === 'object' && typeof m.role === 'string' && typeof m.content === 'string')
+          .filter(m =>
+            m &&
+            typeof m === 'object' &&
+            typeof m.role === 'string' &&
+            typeof m.content === 'string' &&
+            m.content.trim() !== ''
+          )
           .map(m => ({ role: m.role, content: m.content }));
 
         const adapterResponse = await this.adapter.sendMessages(safeMessages, {
@@ -219,9 +226,24 @@ class OrionAgent extends BaseAgent {
           toolCallResults = await this.handleToolCalls(toolCalls, context);
 
           for (const result of toolCallResults) {
+            const toolLabel = result.toolName || 'tool';
+            const resultJson = JSON.stringify(result.result, null, 2);
+
+            // Surface the tool result back to the model in a visually distinct
+            // block so it is easy to spot in the prompt and in traces.
+            const header = '═══════════════════════════════════════════════════════════════════════════════';
+            const titleLine = `TOOL RESULT: ${toolLabel}`;
+            const boxed = [
+              header,
+              titleLine,
+              header,
+              resultJson,
+              header,
+            ].join('\n');
+
             messages.push({
               role: 'system',
-              content: `Tool ${result.toolName} returned: ${JSON.stringify(result.result)}`
+              content: boxed,
             });
           }
         } else {
@@ -333,6 +355,10 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
 
   /**
    * Process a user request with context and tools, returning a stream of the response.
+   * Streaming is currently used only for PLAN mode in the frontend.
+   * Tools are intentionally disabled on the streaming path to keep behavior simple and
+   * avoid half-implemented streaming tool execution.
+   *
    * @param {string} projectId - Project ID
    * @param {string} userMessage - User's message
    * @param {Object} options - Processing options
@@ -342,7 +368,7 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
   async *processStreaming(projectId, userMessage, options = {}) {
     const { messages, context, mode } = await this._prepareRequest(projectId, userMessage, options);
 
-    // Log tool registration snapshot for streaming session
+    // Log tool registration snapshot for streaming session (still useful for debugging)
     try {
       await TraceService.logEvent({
         projectId,
@@ -360,10 +386,13 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
     const adapterStream = this.adapter.sendMessagesStreaming(messages, {
       temperature: mode === 'plan' ? 0.7 : 0.3,
       max_tokens: 8192,
-      tools: functionDefinitions,
+      // IMPORTANT: tools disabled on streaming path for now; PLAN mode streams text only.
+      tools: null,
       context: { projectId, requestId: options.requestId },
     });
 
+    // For now, just forward adapter events (chunk / error / done). Streaming tool calls are
+    // not yet executed in-stream. ACT mode (non-streaming) remains the path for tools.
     for await (const event of adapterStream) {
       yield event;
     }

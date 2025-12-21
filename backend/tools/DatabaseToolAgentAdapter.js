@@ -6,18 +6,26 @@ const DatabaseToolModule = require('./DatabaseTool');
 const TraceService = require('../src/services/trace/TraceService');
 const { TRACE_TYPES, TRACE_SOURCES } = require('../src/services/trace/TraceEvent');
 
-// Support both default export (defaultInstance) and named export (.DatabaseTool)
-// so tests that mock ../../tools/DatabaseTool with a plain object still work.
-const DatabaseTool = DatabaseToolModule.DatabaseTool || DatabaseToolModule;
+// Resolve a usable DatabaseTool **instance** (not the class constructor).
+// In production, backend/tools/DatabaseTool exports a default instance with
+// get_subtask_full_context, list_subtasks_for_task, etc. In tests, Jest may
+// mock this module with a plain object. We prefer whatever exposes the
+// instance-style API (get_subtask_full_context as a method).
+const DatabaseToolInstance =
+  DatabaseToolModule && typeof DatabaseToolModule.get_subtask_full_context === 'function'
+    ? DatabaseToolModule
+    : (DatabaseToolModule && DatabaseToolModule.DatabaseTool
+        ? new DatabaseToolModule.DatabaseTool('Orion')
+        : null);
 
 const originalCreateSubtask =
-  DatabaseTool && typeof DatabaseTool.create_subtask === 'function'
-    ? DatabaseTool.create_subtask.bind(DatabaseTool)
+  DatabaseToolInstance && typeof DatabaseToolInstance.create_subtask === 'function'
+    ? DatabaseToolInstance.create_subtask.bind(DatabaseToolInstance)
     : null;
 
 const originalGetSubtaskFullContext =
-  DatabaseTool && typeof DatabaseTool.get_subtask_full_context === 'function'
-    ? DatabaseTool.get_subtask_full_context.bind(DatabaseTool)
+  DatabaseToolInstance && typeof DatabaseToolInstance.get_subtask_full_context === 'function'
+    ? DatabaseToolInstance.get_subtask_full_context.bind(DatabaseToolInstance)
     : null;
 
 const DatabaseToolAgentAdapter = {
@@ -52,15 +60,15 @@ const DatabaseToolAgentAdapter = {
       projectId = context.projectId.trim();
     }
 
-    // Log tool_call event
+    // Log tool_call event (ensure type, source, and timestamp are friendly for UI)
     try {
       await TraceService.logEvent({
         projectId,
-        type: TRACE_TYPES.TOOL_CALL,
-        source: TRACE_SOURCES.TOOL,
-        timestamp: Date.now(),
+        type: 'tool_call',
+        source: 'tool',
+        timestamp: new Date().toISOString(),
         summary: 'DatabaseTool_get_subtask_full_context call',
-        details: { subtaskId },
+        details: { subtaskId, projectId },
         requestId: context?.requestId,
       });
     } catch (err) {
@@ -69,22 +77,53 @@ const DatabaseToolAgentAdapter = {
 
     // Call original method (falls back to direct call if bound version is not available,
     // e.g. when DatabaseTool is a Jest mock object in tests).
-    const targetFn = originalGetSubtaskFullContext || DatabaseTool.get_subtask_full_context;
+    const targetFn = originalGetSubtaskFullContext || (DatabaseToolInstance && DatabaseToolInstance.get_subtask_full_context);
     if (typeof targetFn !== 'function') {
       throw new Error('DatabaseTool_get_subtask_full_context: underlying implementation is not available');
     }
 
-    const result = await targetFn(subtaskId, projectId);
+    let result;
+    try {
+      result = await targetFn(subtaskId, projectId);
+    } catch (error) {
+      // Log a tool_result-style error event so the gap is visible in the trace timeline
+      try {
+        await TraceService.logEvent({
+          projectId,
+          type: 'tool_result',
+          source: 'tool',
+          timestamp: new Date().toISOString(),
+          summary: 'DatabaseTool_get_subtask_full_context error',
+          details: {
+            ok: false,
+            hasSubtask: false,
+            error: error.message,
+          },
+          error: { message: error.message },
+          requestId: context?.requestId,
+        });
+      } catch (traceErr) {
+        console.error('Trace logging failed for get_subtask_full_context error:', traceErr);
+      }
 
-    // Log tool_result event
+      // Preserve existing behavior for callers (ToolRunner/OrionAgent)
+      throw error;
+    }
+
+    // Log tool_result event with a compact summary of the outcome
     try {
       await TraceService.logEvent({
         projectId,
-        type: TRACE_TYPES.TOOL_RESULT,
-        source: TRACE_SOURCES.TOOL,
-        timestamp: Date.now(),
+        type: 'tool_result',
+        source: 'tool',
+        timestamp: new Date().toISOString(),
         summary: 'DatabaseTool_get_subtask_full_context result',
-        details: { result },
+        details: {
+          ok: !!(result && result.ok),
+          hasSubtask: !!(result && result.subtask),
+          // Keep full result for debugging; frontend can pretty-print or collapse
+          result,
+        },
         requestId: context?.requestId,
       });
     } catch (err) {
@@ -138,9 +177,9 @@ const DatabaseToolAgentAdapter = {
     try {
       await TraceService.logEvent({
         projectId,
-        type: TRACE_TYPES.TOOL_CALL,
-        source: TRACE_SOURCES.TOOL,
-        timestamp: Date.now(),
+        type: 'tool_call',
+        source: 'tool',
+        timestamp: new Date().toISOString(),
         summary: 'DatabaseTool_create_subtask call',
         details: { taskId, title },
         requestId: context?.requestId,
@@ -173,9 +212,9 @@ const DatabaseToolAgentAdapter = {
     try {
       await TraceService.logEvent({
         projectId,
-        type: TRACE_TYPES.TOOL_RESULT,
-        source: TRACE_SOURCES.TOOL,
-        timestamp: Date.now(),
+        type: 'tool_result',
+        source: 'tool',
+        timestamp: new Date().toISOString(),
         summary: 'DatabaseTool_create_subtask result',
         details: { result },
         requestId: context?.requestId,

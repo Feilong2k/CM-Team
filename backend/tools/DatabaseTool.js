@@ -293,7 +293,19 @@ class DatabaseTool {
 
   async get_subtask_full_context(subtask_id, projectId = 'P1') {
     this._checkRole();
+
+    console.log('[DatabaseTool] get_subtask_full_context called', {
+      subtask_id,
+      projectId,
+    });
+
     const subtask = await this._findSubtaskByIdOrExternal(subtask_id, projectId);
+
+    console.log('[DatabaseTool] get_subtask_full_context resolved', {
+      subtask_external_id: subtask.external_id,
+      status: subtask.status,
+      workflow_stage: subtask.workflow_stage,
+    });
 
     // Return all core workflow sections for the subtask in one object
     return {

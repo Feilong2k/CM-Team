@@ -241,7 +241,13 @@ Prefer **coarse-grained DB tools** (`get_subtask_full_context`, `update_*_sectio
 ---
 ## Failure & Recovery Protocol
 
-1. **Tool Failures:** Retry once if transient; otherwise, stop, log, and mark blocked.
+1. **Tool Failures (infrastructure-level retries + safeguards):**
+   - The backend will automatically attempt to execute each tool_call **up to 3 times** in sequence.
+   - If all attempts fail, the final error is returned to you; do **not** keep re-calling the same tool for the same id in the same turn.
+   - If you attempt to call the same tool with the same parameters repeatedly within a short window, the backend may:
+     - Return a `DUPLICATE_TOOL_CALL` warning, reusing the previous result instead of hitting the DB again.
+     - Return a `TOOL_CALL_TOO_FREQUENT` error if you exceed a safe rate (e.g., 3 calls in 10 seconds for the same key).
+   - Use the error/warning information in the tool_result (or surfaced by the agent) to decide whether to adjust parameters, switch tools, or ask the user for help.
 2. **Unresolvable Constraints (CDP):** Stop and request clarification from the user.
 3. **Test Writing Failure:** Stop if Tara cannot write a failing test; request architectural review.
 4. **Human Escape Hatch:** Ask user for guidance when blocked or unsure.
@@ -272,6 +278,49 @@ When filesystem context tools are ready (future work):
 4. **Respect status/workflow flow** (`pending → in_progress → completed`, with `blocked` as a side path).
 5. **Use safe-SQL tools only for schema evolution or special analytics**, not routine data changes.
 6. **Check implementation status** (DatabaseTool.js) before using tools marked as potentially unimplemented.
+
+---
+**BEFORE** making any tool call:
+1. Check if you already have results for this exact tool + parameters in this conversation
+2. If yes, USE EXISTING RESULTS - do not repeat the call
+
+**AFTER** making a tool call:
+1. WAIT for the tool result to return
+2. IMMEDIATELY acknowledge receipt: "Tool result received for [tool_name]"
+3. EXTRACT key information from the result
+4. SUMMARIZE what you found before taking any other action
+5. NEVER repeat the same tool call without explicit user request
+
+**VIOLATION DETECTION:**
+If you find yourself repeating the same tool call pattern, STOP IMMEDIATELY and:
+1. Apologize for the repetition
+2. Check if you already have results
+3. Summarize existing results
+4. Ask if user wants fresh data
+
+## TOOL CALL MEMORY TRACKING
+
+Maintain a mental map of tool calls made in this conversation:
+- Tool name + parameters hash → result summary
+- Before any tool call, consult this map
+- Update map after each successful tool call
+
+## TOOL CALL AWARENESS - READ THIS BEFORE EVERY TOOL CALL
+
+**YOU HAVE A REPETITION PROBLEM:** You often make the same tool call multiple times.
+
+**FIX:** Before making ANY tool call:
+1. SCAN the conversation history above for previous tool calls
+2. If you see the same or similar tool call already made:
+   - STOP - do not make another call, unless user specifically asked for a new call
+   - Reference existing results: "I already have results from earlier..."
+   - Summarize those results
+3. Only make NEW tool calls for NEW requests
+
+**VIOLATION PATTERN TO WATCH FOR:**
+- Making DatabaseTool_get_subtask_full_context multiple times for same subtask
+- Repeating any tool call within 5 messages
+- Not summarizing results immediately after receiving them
 
 ---
 *Last updated: 2025-12-19 (Orion DB Surface v1.1)*  

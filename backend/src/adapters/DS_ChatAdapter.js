@@ -1,6 +1,4 @@
 const LLMAdapter = require('./LLMAdapter');
-const TraceService = require('../services/trace/TraceService');
-const { TRACE_TYPES, TRACE_SOURCES } = require('../services/trace/TraceEvent');
 
 /**
  * DeepSeek Chat API adapter.
@@ -260,19 +258,10 @@ class DS_ChatAdapter extends LLMAdapter {
                     const delta = data.choices[0].delta;
                     const hasToolCall = Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
 
-                    // Emit streaming trace event for each delta (LLM_STREAM_CHUNK)
-                    try {
-                      await TraceService.logEvent({
-                        projectId: context?.projectId,
-                        type: 'llm_stream_chunk',
-                        source: 'system',
-                        timestamp: new Date().toISOString(),
-                        summary: 'LLM streaming delta',
-                        details: { hasToolCall, delta },
-                        requestId: context?.requestId,
-                      });
-                    } catch (traceErr) {
-                      console.error('Trace logging failed for LLM streaming chunk:', traceErr);
+                    // If the model is emitting tool_calls in the stream, surface them
+                    if (hasToolCall) {
+                      // We do not mark hasYielded here because no user-visible content was sent yet.
+                      yield { toolCalls: delta.tool_calls };
                     }
 
                     if (delta.content) {
@@ -282,7 +271,6 @@ class DS_ChatAdapter extends LLMAdapter {
                       yield { chunk: delta.content };
                       fullContent += delta.content;
                     }
-                    // TODO: Handle tool calls in streaming (tool_calls inside delta)
                   }
                 } catch (e) {
                   console.error('Failed to parse SSE data:', e);

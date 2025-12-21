@@ -1,4 +1,6 @@
 const LLMAdapter = require('./LLMAdapter');
+const TraceService = require('../services/trace/TraceService');
+const { TRACE_TYPES, TRACE_SOURCES } = require('../services/trace/TraceEvent');
 
 /**
  * DeepSeek Chat API adapter.
@@ -163,7 +165,7 @@ class DS_ChatAdapter extends LLMAdapter {
    * @returns {AsyncGenerator<Object>} Stream of chunks with chunk content or tool calls
    */
   async *sendMessagesStreaming(messages, options = {}) {
-    const { tools = null, max_tokens, temperature } = options;
+    const { tools = null, max_tokens, temperature, context } = options;
     
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new Error('messages must be a non-empty array');
@@ -247,6 +249,7 @@ class DS_ChatAdapter extends LLMAdapter {
                 const dataStr = line.slice(6);
                 if (dataStr === '[DONE]') {
                   // Stream finished
+                  hasYielded = true;
                   yield { done: true, fullContent };
                   return;
                 }
@@ -255,6 +258,23 @@ class DS_ChatAdapter extends LLMAdapter {
                   const data = JSON.parse(dataStr);
                   if (data.choices && data.choices[0] && data.choices[0].delta) {
                     const delta = data.choices[0].delta;
+                    const hasToolCall = Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
+
+                    // Emit streaming trace event for each delta (LLM_STREAM_CHUNK)
+                    try {
+                      await TraceService.logEvent({
+                        projectId: context?.projectId,
+                        type: 'llm_stream_chunk',
+                        source: 'system',
+                        timestamp: new Date().toISOString(),
+                        summary: 'LLM streaming delta',
+                        details: { hasToolCall, delta },
+                        requestId: context?.requestId,
+                      });
+                    } catch (traceErr) {
+                      console.error('Trace logging failed for LLM streaming chunk:', traceErr);
+                    }
+
                     if (delta.content) {
                       // Mark as yielded BEFORE yielding, so if yield throws (consumer aborted),
                       // we know not to retry.
@@ -262,7 +282,7 @@ class DS_ChatAdapter extends LLMAdapter {
                       yield { chunk: delta.content };
                       fullContent += delta.content;
                     }
-                    // TODO: Handle tool calls in streaming
+                    // TODO: Handle tool calls in streaming (tool_calls inside delta)
                   }
                 } catch (e) {
                   console.error('Failed to parse SSE data:', e);
@@ -276,6 +296,7 @@ class DS_ChatAdapter extends LLMAdapter {
         
         // If we reach here without [DONE], yield final event
         if (fullContent) {
+          hasYielded = true;
           yield { done: true, fullContent };
         }
         return;

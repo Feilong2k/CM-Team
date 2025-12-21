@@ -72,7 +72,7 @@ class OrionAgent extends BaseAgent {
       try {
         const rootDir = process.cwd(); // Assuming we are in project root or backend
         // We need to be careful about where cwd is.
-        // If cwd is c:\Coding\CM-TEAM, then backend is a subdir.
+        // If cwd is c:\\Coding\\CM-TEAM, then backend is a subdir.
         
         // Simple recursive list implementation for whitelisted dirs
         const whitelist = ['backend', 'frontend', '.Docs', 'src'];
@@ -272,18 +272,18 @@ class OrionAgent extends BaseAgent {
   formatSystemPrompt(context, mode) {
     // Add dynamic context header
     const fileList = context.systemState.files.join('\n');
-    const header = `## Current Session Context
-- **Project ID**: ${context.projectId}
-- **Mode**: ${mode} (${mode === 'plan' ? 'PLAN mode: Focus on analysis, planning, and high-level guidance.' : 'ACT mode: Focus on concrete implementation, code generation, and execution.'})
-- **Chat History**: ${context.chatHistory.length} previous messages available
-- **System State**: ${Object.keys(context.systemState).length > 0 ? 'Available' : 'Not available'}
-- **Current Time**: ${new Date().toISOString()}
+    const header = `## Current Session Context\n
+- **Project ID**: ${context.projectId}\n
+- **Mode**: ${mode} (${mode === 'plan' ? 'PLAN mode: Focus on analysis, planning, and high-level guidance.' : 'ACT mode: Focus on concrete implementation, code generation, and execution.'})\n
+- **Chat History**: ${context.chatHistory.length} previous messages available\n
+- **System State**: ${Object.keys(context.systemState).length > 0 ? 'Available' : 'Not available'}\n
+- **Current Time**: ${new Date().toISOString()}\n
 
-## Available Context (File List)
-The following files are available in the project context. You can use 'read_file' to examine them.
-\`\`\`
-${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}
-\`\`\`
+## Available Context (File List)\n
+The following files are available in the project context. You can use 'read_file' to examine them.\n
+\`\`\`\n
+${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\n
+\`\`\`\n
 
 `;
 
@@ -342,10 +342,26 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}
   async *processStreaming(projectId, userMessage, options = {}) {
     const { messages, context, mode } = await this._prepareRequest(projectId, userMessage, options);
 
+    // Log tool registration snapshot for streaming session
+    try {
+      await TraceService.logEvent({
+        projectId,
+        type: 'tool_registration',
+        source: 'system',
+        timestamp: new Date().toISOString(),
+        summary: 'Streaming tool registry for Orion',
+        details: { tools: Object.keys(this.tools || {}) },
+        requestId: options.requestId,
+      });
+    } catch (err) {
+      console.error('Trace logging failed for tool registration (streaming):', err);
+    }
+
     const adapterStream = this.adapter.sendMessagesStreaming(messages, {
       temperature: mode === 'plan' ? 0.7 : 0.3,
       max_tokens: 8192,
-      tools: require('../../tools/functionDefinitions')
+      tools: functionDefinitions,
+      context: { projectId, requestId: options.requestId },
     });
 
     for await (const event of adapterStream) {

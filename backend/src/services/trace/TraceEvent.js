@@ -4,7 +4,18 @@
  * @property {string} timestamp // ISO 8601 UTC
  * @property {string} projectId // e.g. "P1"
  * @property {('user'|'orion'|'tool'|'system')} source
- * @property {('user_message'|'orion_response'|'tool_call'|'tool_result'|'llm_call'|'llm_result'|'system_error')} type
+ * @property {(
+ *   'user_message'|
+ *   'orion_response'|
+ *   'tool_call'|
+ *   'tool_result'|
+ *   'llm_call'|
+ *   'llm_result'|
+ *   'system_error'|
+ *   'llm_stream_chunk'|
+ *   'tool_result_stream'|
+ *   'tool_registration'
+ * )} type
  * @property {('inbound'|'outbound'|'internal')=} direction
  * @property {string=} toolName
  * @property {string=} requestId
@@ -33,7 +44,11 @@ const TRACE_TYPES = [
   'tool_result',
   'llm_call',
   'llm_result',
-  'system_error'
+  'system_error',
+  // Streaming / advanced trace types
+  'llm_stream_chunk',
+  'tool_result_stream',
+  'tool_registration'
 ];
 
 /**

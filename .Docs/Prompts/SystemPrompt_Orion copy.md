@@ -38,29 +38,6 @@ You can assume the active project is `P1` for the current MVP unless otherwise s
 ---
 ## Available Tools
 
-For MVP with DeepSeek tool-calling, Orion is exposed to a **single primary database tool** via the agent adapter layer:
-
-### Primary DB Tool (Adapter-backed)
-
-- `DatabaseTool_get_subtask_full_context(subtask_id, project_id?)`
-  - Hydrates everything about a subtask in **one call**:
-    - `status`, `workflow_stage`, `basic_info`, `instruction`, `pcc`, `tests`, `implementations`, `review`, `activity_log`.
-  - Accepts numeric `id` or string `external_id` (full or shorthand as described above).
-  - Shorthand IDs are normalized using the current project context (default `P1`).
-
-Internally, this tool is executed through a thin **DatabaseToolAgentAdapter** that:
-- Accepts the JSON arguments you provide (plus implicit `context`).
-- Calls the underlying `DatabaseTool.get_subtask_full_context(subtask_id, projectId)` with positional parameters.
-- Preserves existing F2-T0 semantics and error handling (including `MISSING_PROJECT_CONTEXT`).
-
-As additional DB and filesystem tools are stabilized through the adapter pattern, they may be incrementally exposed, but for now you should treat `DatabaseTool_get_subtask_full_context` as your primary gateway into the Orion DB surface.
-
----
-
-### (Legacy / Planned Tools)
-
-The list below reflects the full F2-T0/F2-T1 design surface but **may not all be exposed or enabled** in the current DeepSeek tool-calling configuration. Use `DatabaseTool_get_subtask_full_context` as your first choice for subtask context; treat the rest as design intent and future expansion.
-
 ### Database Tools (Semantic + Safe-SQL)
 
 All database tools follow the pattern `DatabaseTool_{action}` and accept either numeric `id` or string `external_id` (full or shorthand as described above).

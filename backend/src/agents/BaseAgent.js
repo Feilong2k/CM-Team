@@ -1,3 +1,5 @@
+const { parseFunctionCall } = require('../../tools/functionDefinitions');
+
 /**
  * Abstract base class for AI agents.
  * Provides common functionality for tool orchestration, context building, and conversation management.
@@ -63,22 +65,31 @@ class BaseAgent {
 
     const results = [];
     for (const toolCall of toolCalls) {
+      // Derive tool + action names using the same helper executeTool uses
+      let toolNameLabel = 'unknown';
+      try {
+        const { tool, action } = parseFunctionCall(toolCall);
+        toolNameLabel = action ? `${tool}.${action}` : tool;
+      } catch (e) {
+        // If parsing fails here, executeTool will also fail; keep label as 'unknown'
+      }
+
       try {
         const result = await this.executeTool(toolCall, context);
         results.push({
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
+          toolCallId: toolCall.id || null,
+          toolName: toolNameLabel,
           result,
           success: true,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       } catch (error) {
         results.push({
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
+          toolCallId: toolCall.id || null,
+          toolName: toolNameLabel,
           error: error.message,
           success: false,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
     }
@@ -93,28 +104,29 @@ class BaseAgent {
    * @returns {Promise<any>} Tool execution result
    */
   async executeTool(toolCall, context) {
-    const { name, arguments: args } = toolCall;
+    // Normalize tool call shape using functionDefinitions.parseFunctionCall
+    const { tool, action, params } = parseFunctionCall(toolCall);
 
-    if (!this.tools[name]) {
-      throw new Error(`Tool "${name}" not found in agent's tool registry`);
+    if (!this.tools || !this.tools[tool]) {
+      throw new Error(`Tool "${tool}" not found in agent's tool registry`);
     }
 
-    const tool = this.tools[name];
-    if (typeof tool !== 'function' && typeof tool.execute !== 'function') {
-      throw new Error(`Tool "${name}" is not callable`);
+    const toolInstance = this.tools[tool];
+    const fn = toolInstance && typeof toolInstance[action] === 'function'
+      ? toolInstance[action].bind(toolInstance)
+      : null;
+
+    if (!fn) {
+      throw new Error(`Tool "${tool}" action "${action}" is not callable`);
     }
 
     // Add context to tool arguments
-    const toolArgs = { ...args, context };
+    const toolArgs = { ...params, context };
 
     try {
-      if (typeof tool === 'function') {
-        return await tool(toolArgs);
-      } else {
-        return await tool.execute(toolArgs);
-      }
+      return await fn(toolArgs);
     } catch (error) {
-      throw new Error(`Tool "${name}" execution failed: ${error.message}`);
+      throw new Error(`Tool "${tool}_${action}" execution failed: ${error.message}`);
     }
   }
 

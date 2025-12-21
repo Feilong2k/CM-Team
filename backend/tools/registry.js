@@ -1,5 +1,7 @@
 const FileSystemTool = require('./FileSystemTool');
-const { DatabaseTool } = require('./DatabaseTool'); // Import the class, not instance
+// Import the default DatabaseTool instance so tools map to live objects, not the class
+const DatabaseTool = require('./DatabaseTool');
+const DatabaseToolAgentAdapter = require('./DatabaseToolAgentAdapter');
 
 /**
  * Role-based tool registry.
@@ -15,7 +17,14 @@ const roleCapabilities = {
   },
   Orion: {
     FileSystemTool,
-    DatabaseTool,
+    // DatabaseTool here is the agent-level adapter that understands LLM
+    // tool_call argument shapes. The underlying DatabaseTool instance is
+    // still exported from ./DatabaseTool for direct use (e.g. migrations,
+    // probes) and is also exposed here as DatabaseToolInternal so that
+    // OrionAgent can keep using chatMessages.* helpers without going
+    // through the adapter.
+    DatabaseTool: DatabaseToolAgentAdapter,
+    DatabaseToolInternal: DatabaseTool,
   }
 };
 

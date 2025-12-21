@@ -24,10 +24,21 @@ class LLMAdapter {
    * @abstract
    * @param {Array} messages - Array of message objects with role and content
    * @param {Object} [options] - Additional options
-   * @returns {Promise<string>} The LLM's response
+   * @returns {Promise<Object>} The LLM's response with content and toolCalls
    */
   async sendMessages(messages, options) {
     throw new Error('sendMessages() must be implemented by subclass');
+  }
+
+  /**
+   * Send messages to the LLM and stream the response.
+   * @abstract
+   * @param {Array} messages - Array of message objects with role and content
+   * @param {Object} [options] - Additional options
+   * @returns {AsyncGenerator<Object>} Stream of chunks with chunk content or tool calls
+   */
+  async *sendMessagesStreaming(messages, options) {
+    throw new Error('sendMessagesStreaming() must be implemented by subclass');
   }
 
   /**

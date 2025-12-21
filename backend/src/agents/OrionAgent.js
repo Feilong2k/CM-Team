@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { listFiles } = require('../../tools/list_files'); // Assuming this tool exists or I need to create/import it. 
 // Wait, I should check where list_files is defined. It's likely in backend/tools/list_files.js
+const functionDefinitions = require('../../tools/functionDefinitions');
 
 /**
  * OrionAgent - The orchestrator agent that extends BaseAgent.
@@ -12,13 +13,24 @@ class OrionAgent extends BaseAgent {
   /**
    * Constructor for OrionAgent
    * @param {Object} adapter - Model adapter that implements LLMAdapter interface
-   * @param {Object} databaseTool - Database tool with methods for chat messages and logging
+   * @param {Object} tools - Tool map for this agent (e.g., { DatabaseTool, FileSystemTool })
    * @param {string} [promptPath] - Optional custom path to the Orion prompt file
    */
-  constructor(adapter, databaseTool, promptPath = null) {
-    super(adapter, databaseTool, 'Orion');
+  constructor(adapter, tools, promptPath = null) {
+    // BaseAgent will store the tools map on this.tools
+    super(adapter, tools, 'Orion');
     
-    this.db = databaseTool;
+    // Convenience alias for DB-specific operations (chat messages, etc.)
+    // Prefer the raw DatabaseTool instance when exposed as DatabaseToolInternal
+    // in the tools registry so that agent-level adapters do not interfere with
+    // chatMessages.* helpers or other internal DB usage.
+    if (tools && tools.DatabaseToolInternal) {
+      this.db = tools.DatabaseToolInternal;
+    } else if (tools && tools.DatabaseTool) {
+      this.db = tools.DatabaseTool;
+    } else {
+      this.db = tools;
+    }
     
     // Load Orion prompt from file
     const defaultPromptPath = path.join(__dirname, '../../../.Docs/Prompts/SystemPrompt_Orion.md');
@@ -123,6 +135,41 @@ class OrionAgent extends BaseAgent {
   }
 
   /**
+   * Prepare a request by storing user message, building context, and formatting messages.
+   * This is shared between process and processStreaming.
+   * @private
+   */
+  async _prepareRequest(projectId, userMessage, options = {}) {
+    const { mode = 'plan' } = options;
+    
+    if (!projectId || !userMessage) {
+      throw new Error('projectId and userMessage are required');
+    }
+
+    if (mode !== 'plan' && mode !== 'act') {
+      throw new Error('mode must be either "plan" or "act"');
+    }
+
+    // Store user message
+    if (this.db.chatMessages && typeof this.db.chatMessages.addMessage === 'function') {
+      await this.db.chatMessages.addMessage(projectId, 'user', userMessage, { mode });
+    }
+
+    // Build context and system prompt
+    const context = await this.buildContext(projectId);
+    const systemPrompt = this.formatSystemPrompt(context, mode);
+
+    // Format messages for the adapter
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...this.formatChatHistory(context.chatHistory),
+      { role: 'user', content: userMessage }
+    ];
+
+    return { messages, context, mode };
+  }
+
+  /**
    * Process a user request with context and tools.
    * @param {string} projectId - Project ID
    * @param {string} userMessage - User's message
@@ -145,27 +192,10 @@ class OrionAgent extends BaseAgent {
     let response;
     let responseContent = '';
     let toolCallResults = [];
-    let messages = [
-      { role: 'system', content: '' },
-      { role: 'user', content: userMessage }
-    ];
 
     try {
-      // Store user message
-      if (this.db.chatMessages && typeof this.db.chatMessages.addMessage === 'function') {
-        await this.db.chatMessages.addMessage(projectId, 'user', userMessage, { mode });
-      }
-
-      // Build context and system prompt
-      const context = await this.buildContext(projectId);
-      const systemPrompt = this.formatSystemPrompt(context, mode);
-
-      // Initialize messages with system prompt and chat history
-      messages = [
-        { role: 'system', content: systemPrompt },
-        ...this.formatChatHistory(context.chatHistory),
-        { role: 'user', content: userMessage }
-      ];
+      // Prepare request (store user message, build context, format messages)
+      const { messages, context } = await this._prepareRequest(projectId, userMessage, options);
 
       let continueLoop = true;
       let iteration = 0;
@@ -174,11 +204,19 @@ class OrionAgent extends BaseAgent {
       while (continueLoop && iteration < maxIterations) {
         iteration++;
 
+        // Sanitize messages before sending to adapter to avoid malformed entries
+        const safeMessages = messages
+          .filter(m => m && typeof m === 'object' && typeof m.role === 'string' && typeof m.content === 'string')
+          .map(m => ({ role: m.role, content: m.content }));
+
         // Send messages to adapter
-        const adapterResponse = await this.adapter.sendMessages(messages, {
+        const adapterResponse = await this.adapter.sendMessages(safeMessages, {
           temperature: mode === 'plan' ? 0.7 : 0.3,
           max_tokens: 4000,
-          tools: this.tools // Pass tools to adapter if needed
+          // Pass OpenAI-style function definitions to the adapter so GPT/DeepSeek can
+          // return structured tool_calls. Actual tool execution is handled by
+          // BaseAgent using this.tools (from registry).
+          tools: functionDefinitions
         });
 
         // Adapter response expected to be { content, toolCalls }
@@ -211,6 +249,21 @@ class OrionAgent extends BaseAgent {
         } else {
           continueLoop = false;
         }
+      }
+
+      // Fallback: if the model never produced any natural-language content but
+      // tools did run, surface the raw tool results so the user still sees
+      // something useful rather than an empty message.
+      if ((!responseContent || responseContent.trim() === '') && toolCallResults && toolCallResults.length > 0) {
+        responseContent = toolCallResults
+          .map(result => {
+            const label = result.toolName || 'tool';
+            if (result.success) {
+              return `Tool ${label} returned:\n${JSON.stringify(result.result, null, 2)}`;
+            }
+            return `Tool ${label} failed: ${result.error || 'Unknown error'}`;
+          })
+          .join('\n\n');
       }
 
       response = {
@@ -301,6 +354,31 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}
       }
     } catch (logError) {
       console.error('Failed to log error:', logError);
+    }
+  }
+
+  /**
+   * Process a user request with context and tools, returning a stream of the response.
+   * @param {string} projectId - Project ID
+   * @param {string} userMessage - User's message
+   * @param {Object} options - Processing options
+   * @param {string} [options.mode='plan'] - 'plan' or 'act' mode
+   * @returns {AsyncGenerator<Object>} Stream of chunks and events
+   */
+  async *processStreaming(projectId, userMessage, options = {}) {
+    // Prepare request (store user message, build context, format messages)
+    const { messages, context, mode } = await this._prepareRequest(projectId, userMessage, options);
+
+    // Call the adapter's streaming method
+    const adapterStream = this.adapter.sendMessagesStreaming(messages, {
+      temperature: mode === 'plan' ? 0.7 : 0.3,
+      max_tokens: 4000,
+      tools: require('../../tools/functionDefinitions')
+    });
+
+    // Yield each event from the adapter stream
+    for await (const event of adapterStream) {
+      yield event;
     }
   }
 }

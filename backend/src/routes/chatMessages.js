@@ -2,9 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { query } = require('../db/connection');
 const OrionAgent = require('../agents/OrionAgent');
-const dbTool = require('../../tools/DatabaseTool');
 const { getToolsForRole } = require('../../tools/registry');
-const DS_ChatAdapter = require('../adapters/DS_ChatAdapter');
+const { DS_ChatAdapter, GPT41Adapter } = require('../adapters');
+const StreamingService = require('../services/StreamingService');
 
 const validSenders = ['user', 'orion', 'system'];
 
@@ -21,33 +21,46 @@ function parsePaginationParams(limit, offset) {
   };
 }
 
-const adapter = new DS_ChatAdapter({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-});
+// Choose adapter based on environment.
+// If OPENAI_API_KEY is set and ORION_MODEL_PROVIDER=openai, use GPT-4.1.
+// Otherwise fall back to DeepSeek.
+let adapter;
+if (process.env.ORION_MODEL_PROVIDER === 'openai') {
+  adapter = new GPT41Adapter({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+} else {
+  adapter = new DS_ChatAdapter({
+    apiKey: process.env.DEEPSEEK_API_KEY,
+  });
+}
 
-// Get comprehensive tool set for Orion
+// Get comprehensive tool set for Orion (DatabaseTool + FileSystemTool instances)
 const tools = getToolsForRole('Orion', 'act');
-// We need to merge DatabaseTool instance with the registry tools because OrionAgent
-// expects dbTool as the second argument, but also needs access to other tools in its .tools property.
-// However, OrionAgent constructor signature is (adapter, databaseTool, promptPath).
-// It sets this.tools = tools || {} in BaseAgent.
-// We should update OrionAgent to accept a tools object OR handle the merge.
-// For now, let's pass dbTool as the second arg, and then manually attach other tools.
 
-const orionAgent = new OrionAgent(adapter, dbTool);
-// Attach other tools to the agent's tool registry
-if (tools) {
-    Object.assign(orionAgent.tools, tools.FileSystemTool ? tools.FileSystemTool.tools : {});
-    // DatabaseTool is already there via dbTool if we structure it right, but BaseAgent expects
-    // this.tools to be a map of callable functions.
-    // DatabaseTool instance methods are not automatically in this.tools unless we map them.
-    
-    // Map DatabaseTool methods to agent tools
-    // We can iterate over dbTool prototype or known methods if needed, but 
-    // for now let's just ensure FileSystemTool is there.
-    
-    // Add specific database tools if they are defined in registry as standalone functions
-    // But they are defined as "DatabaseTool" class in registry.
+// OrionAgent now expects the full tools map, and will use tools.DatabaseTool
+// internally for chatMessages and DB operations.
+const orionAgent = new OrionAgent(adapter, tools);
+
+// Streaming service instance
+const streamingService = new StreamingService();
+
+// Helper to send error response for streaming or JSON
+function sendErrorResponse(err, req, res) {
+  console.error('Error processing chat message:', err);
+  
+  const acceptHeader = req.get('Accept') || '';
+  if (acceptHeader.includes('text/event-stream')) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+    res.end();
+  } else {
+    return res.status(500).json({ 
+      error: 'Internal server error', 
+      details: err.message, 
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined 
+    });
+  }
 }
 
 router.post('/messages', async (req, res) => {
@@ -63,14 +76,54 @@ router.post('/messages', async (req, res) => {
 
   try {
     if (sender === 'user') {
-      // Delegate processing to OrionAgent
-      // Use mode from metadata if available, default to 'plan'
+      // Check if client wants streaming
+      const acceptHeader = req.get('Accept') || '';
+      const wantsStreaming = acceptHeader.includes('text/event-stream');
       const mode = (metadata && metadata.mode) || 'plan';
-      const response = await orionAgent.process(external_id, content, { mode });
-      return res.status(200).json({
-        message: response.content,
-        metadata: response.metadata,
-      });
+      
+      if (wantsStreaming) {
+        // Use the real adapter streaming via OrionAgent.processStreaming
+        const adapterStream = orionAgent.processStreaming(external_id, content, { mode });
+        const stream = streamingService.streamFromAdapter(adapterStream);
+        
+        // Define onComplete callback to persist the message
+        const onComplete = async (fullContent) => {
+          try {
+            if (fullContent) {
+              // The metadata for the persisted message should include the model and mode
+              const model = orionAgent.getModelName ? orionAgent.getModelName() : 'unknown';
+              await streamingService.persistStreamedMessage(
+                external_id, 
+                fullContent, 
+                { model, mode, streamed: true, ...metadata }
+              );
+            }
+          } catch (persistError) {
+            console.error('Failed to persist streamed message:', persistError);
+            // Error already sent via SSE in handleSSE
+          }
+        };
+        
+        // Handle SSE response
+        await streamingService.handleSSE(stream, res, onComplete);
+        return;
+      } else {
+        // Non-streaming response
+        const response = await orionAgent.process(external_id, content, { mode });
+        
+        // Persist the Orion response to database
+        await query(
+          `INSERT INTO chat_messages (external_id, sender, content, metadata)
+           VALUES ($1, $2, $3, $4)
+           RETURNING id, external_id, sender, content, metadata, created_at, updated_at`,
+          [external_id, 'orion', response.content, { ...response.metadata, mode }]
+        );
+        
+        return res.status(200).json({
+          message: response.content,
+          metadata: response.metadata,
+        });
+      }
     } else {
       // For other senders, just store the message
       const result = await query(
@@ -82,8 +135,7 @@ router.post('/messages', async (req, res) => {
       return res.status(201).json(result.rows[0]);
     }
   } catch (err) {
-    console.error('Error processing chat message:', err);
-    return res.status(500).json({ error: 'Internal server error', details: err.message, stack: err.stack });
+    sendErrorResponse(err, req, res);
   }
 });
 
@@ -100,7 +152,7 @@ router.get('/messages', async (req, res) => {
     const result = await query(
       `SELECT * FROM chat_messages
        WHERE external_id LIKE $1
-       ORDER BY created_at ASC
+       ORDER BY created_at DESC
        LIMIT $2 OFFSET $3`,
       [`${project_id}%`, limitNum, offsetNum]
     );

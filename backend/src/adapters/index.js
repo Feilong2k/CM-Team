@@ -5,6 +5,7 @@
 
 const LLMAdapter = require('./LLMAdapter');
 const DS_ChatAdapter = require('./DS_ChatAdapter');
+const GPT41Adapter = require('./GPT41Adapter');
 
 /**
  * Validate DeepSeek configuration from environment variables.
@@ -12,11 +13,11 @@ const DS_ChatAdapter = require('./DS_ChatAdapter');
  */
 function validateDeepSeekConfig() {
   const apiKey = process.env.DEEPSEEK_API_KEY;
-  
+
   if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
     throw new Error('DEEPSEEK_API_KEY is required and must be a non-empty string in environment variables');
   }
-  
+
   return true;
 }
 
@@ -33,12 +34,12 @@ function validateDeepSeekConfig() {
  */
 function createDeepSeekAdapterFromEnv(options = {}) {
   validateDeepSeekConfig();
-  
+
   const config = {
     apiKey: process.env.DEEPSEEK_API_KEY.trim(),
-    ...options
+    ...options,
   };
-  
+
   return new DS_ChatAdapter(config);
 }
 
@@ -57,6 +58,38 @@ function createDeepSeekAdapter(config) {
 }
 
 /**
+ * Create a GPT-4.1 chat adapter with configuration.
+ * @param {Object} config - Configuration object
+ * @param {string} config.apiKey - OpenAI API key (required)
+ * @param {string} [config.model] - Model to use (default: 'gpt-4.1')
+ * @param {string} [config.baseURL] - API base URL (default: 'https://api.openai.com/v1')
+ * @param {number} [config.timeout] - Request timeout in milliseconds (default: 30000)
+ * @param {number} [config.maxRetries] - Maximum retries (default: 3)
+ * @returns {GPT41Adapter} Configured GPT-4.1 adapter instance
+ */
+function createGPT41Adapter(config) {
+  return new GPT41Adapter(config);
+}
+
+/**
+ * Create a GPT-4.1 adapter from environment variables.
+ * Uses OPENAI_API_KEY from environment.
+ */
+function createGPT41AdapterFromEnv(options = {}) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
+    throw new Error('OPENAI_API_KEY is required and must be a non-empty string in environment variables');
+  }
+
+  const config = {
+    apiKey: apiKey.trim(),
+    ...options,
+  };
+
+  return new GPT41Adapter(config);
+}
+
+/**
  * Validate that an adapter instance implements the LLMAdapter interface.
  * @param {Object} adapter - Adapter instance to validate
  * @returns {boolean} True if adapter implements required interface
@@ -68,7 +101,7 @@ function validateAdapterInterface(adapter) {
   }
 
   const requiredMethods = ['sendMessage', 'parseResponse', 'handleToolCalls', 'getUsageStats'];
-  
+
   for (const method of requiredMethods) {
     if (typeof adapter[method] !== 'function') {
       throw new Error(`Adapter missing required method: ${method}()`);
@@ -87,6 +120,9 @@ function getAdapterType(adapter) {
   if (adapter instanceof DS_ChatAdapter) {
     return 'DeepSeek Chat API';
   }
+  if (adapter instanceof GPT41Adapter) {
+    return 'OpenAI GPT-4.1 API';
+  }
   if (adapter instanceof LLMAdapter) {
     return 'Generic LLM Adapter';
   }
@@ -96,8 +132,11 @@ function getAdapterType(adapter) {
 module.exports = {
   LLMAdapter,
   DS_ChatAdapter,
+  GPT41Adapter,
   createDeepSeekAdapter,
   createDeepSeekAdapterFromEnv,
+  createGPT41Adapter,
+  createGPT41AdapterFromEnv,
   validateDeepSeekConfig,
   validateAdapterInterface,
   getAdapterType,

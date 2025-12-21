@@ -1,0 +1,486 @@
+[
+  {
+    "task_id": "2-1",
+    "title": "A1 – Backend streaming endpoint for Orion replies",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Expose a streaming HTTP endpoint (or SSE) for Orion responses.",
+      "area": "Streaming",
+      "notes": "Must not fake typing; forward real token chunks from LLM adapter. Persist final message to chat_messages."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Define test-first behavior for a streaming chat endpoint that replaces the current one-shot response.",
+        "tests": [
+          "In backend/src/_test_/api_chat_messages.spec.js (or a new streaming-focused spec), add tests that call the chat API and assert that responses are delivered as a stream (chunked HTTP or SSE) rather than a single JSON payload.",
+          "Add a test that verifies that the final, complete response is persisted to the chat_messages table once the stream finishes.",
+          "Add tests for error handling: if the adapter or DB fails mid-stream, the client receives a clear error event and the connection is closed cleanly.",
+          "Keep tests at HTTP contract level only (no knowledge of internal adapter types), but make expectations clear enough that Devon must implement real streaming, not fake timers."
+        ]
+      },
+      "devon": {
+        "goal": "Implement a real streaming endpoint in the backend that forwards adapter chunks and persists the final message.",
+        "steps": [
+          "Inspect backend/src/routes/chatMessages.js to understand the current POST /api/chat/messages behavior (single JSON response).",
+          "Add a new streaming-capable endpoint (e.g., POST /api/chat/messages/stream or upgrade existing route) that uses HTTP chunked encoding or Server-Sent Events.",
+          "Extend the chosen LLM adapter (DS_ChatAdapter or GPT41Adapter) to support a streaming API if it does not already, exposing an async iterator or callback-based interface for tokens/chunks.",
+          "For each chunk from the adapter, write it to the HTTP response immediately, respecting the format Tara's tests assert (plain text chunks, JSON lines, or SSE events).",
+          "Once the stream completes, assemble the full message text and insert it into chat_messages using the existing DatabaseTool or query helper.",
+          "Ensure all error cases cause a clear error to be sent to the client and that no silent failures occur anywhere in the streaming path."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Implement real streaming for Orion chat responses."
+  },
+  {
+    "task_id": "2-1",
+    "title": "A2 – Frontend streaming client integration in ChatPanel",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Wire ChatPanel to consume streamed Orion responses.",
+      "area": "Streaming",
+      "notes": "Introduce streaming helper, manage in-flight AI message, and update content as chunks arrive."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Specify how the ChatPanel should behave when Orion replies via a streaming API.",
+        "tests": [
+          "In a new frontend test file (e.g., frontend/src/__tests__/ChatPanel.streaming.spec.js), mock the streaming client and verify that incoming chunks update the latest AI message incrementally.",
+          "Add a test ensuring that while streaming, the UI shows a typing / loading indicator, and that this indicator disappears when the stream finishes.",
+          "Add tests verifying that auto-scroll behavior is correct while streaming (depending on the user-scroll rules from C-tasks: if user is at bottom, view follows the stream; if scrolled up, it does not).",
+          "Ensure tests verify that final rendered content after the stream matches the full concatenated text, and markdown rendering only happens in a way that matches the UX decisions."
+        ]
+      },
+      "devon": {
+        "goal": "Connect ChatPanel.vue to the backend streaming endpoint and manage streamed updates in the message list.",
+        "steps": [
+          "Create a streaming helper (e.g., frontend/src/utils/streamOrionReply.js) that wraps fetch/SSE/WebSocket for the new streaming endpoint, with callbacks like onChunk, onDone, onError.",
+          "In ChatPanel.vue, introduce state for the currently streaming AI message (e.g., a reference to the last AI message object) and update its content on each chunk.",
+          "Ensure that while streaming, the message is visible in the list and that scrolling rules are respected (work with the C1/C2 tasks).",
+          "After the stream completes, finalize the AI message by ensuring its content is fully set and markdown-rendered, and that there are no duplicate entries when history is later reloaded from the DB.",
+          "Keep all network logic in a composable or utility (no direct fetch logic scattered through templates), in line with the existing architecture."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Show Orion messages progressively as they stream."
+  },
+  {
+    "task_id": "2-1",
+    "title": "A3 – Streaming UX polish (typing indicator & scroll)",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Improve UX around streaming (typing indicator, smooth scroll).",
+      "area": "Streaming",
+      "notes": "Show typing indicator while streaming; ensure scroll behavior doesn’t jitter."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Capture behavioral expectations for streaming UX on the frontend.",
+        "tests": [
+          "Extend ChatPanel tests to assert that a typing indicator appears whenever a streaming response is in progress and disappears once it completes or errors.",
+          "Add tests that verify new chunks do not cause jittery scroll jumps when the user has paused auto-scroll (relying on C1/C2 behavior).",
+          "Add tests to ensure that when the user is at the bottom, streaming chunks keep the bottom-most content visible without overscrolling.",
+          "Cover error scenarios: if streaming fails mid-way, the UI must show a clear error message and remove the typing indicator."
+        ]
+      },
+      "devon": {
+        "goal": "Implement visual polish for streaming interactions in ChatPanel.",
+        "steps": [
+          "Add a dedicated typing / streaming indicator component or inline element in ChatPanel.vue, tied to the streaming state introduced in A2.",
+          "Refine scrollToBottom logic and the userWantsAutoScroll state so that smooth scrolling is used when appropriate and disabled when the user has scrolled away.",
+          "Ensure that partial message content updates do not trigger excessive reflows or full rerenders; only the relevant message node should be updated.",
+          "Verify manually (and via tests) that the combination of streaming + auto-scroll + manual scroll pause works intuitively and with no silent JavaScript errors in the console."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Finalize streaming user experience."
+  },
+  {
+    "task_id": "2-1",
+    "title": "B1 – Define trace event model for Orion interactions",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Design a minimal trace schema for app ↔ Orion ↔ tools.",
+      "area": "Trace Dashboard",
+      "notes": "Cover user messages, LLM calls, tool invocations, and responses."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Specify the observable behavior and shape of trace events as exposed via an API.",
+        "tests": [
+          "Create or extend a backend spec (e.g., backend/src/_test_/api_trace.spec.js) that calls a future /api/trace/logs endpoint and asserts the presence of expected fields (type, timestamp, direction, toolName, payload summaries, etc.).",
+          "Add tests that validate filtering behavior (e.g., by projectId, by type such as 'user_message', 'orion_response', 'tool_call').",
+          "Add tests that ensure sensitive payload fields are either redacted or not included, if that’s part of the design.",
+          "Keep tests focused on the response shape and ordering, not internal storage mechanisms."
+        ]
+      },
+      "devon": {
+        "goal": "Define and document a trace event schema that other tasks can build on.",
+        "steps": [
+          "Propose a TraceEvent interface (in a JS doc comment or TypeScript-like comment) that includes at least: id, timestamp, projectId, source (user/orion/tool), type, summary, details, and optional tool-specific metadata.",
+          "Identify which layers will emit trace events: chatMessages route, OrionAgent, DatabaseToolAgentAdapter, FileSystemTool, etc.",
+          "Document the schema and lifecycle of a trace event in a DEV note or inline comments so that future work in B2/B3 can rely on it.",
+          "Ensure whatever you design can be implemented without violating the existing layering rules (routes → controllers → services → models)."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Foundation for pop-out trace dashboard."
+  },
+  {
+    "task_id": "2-1",
+    "title": "B2 – Implement backend trace logging service and API",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Capture trace events and expose them via HTTP.",
+      "area": "Trace Dashboard",
+      "notes": "Add logging in chatMessages route, OrionAgent, and tool adapters; provide paginated /api/trace endpoint."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Lock in the behavior of the trace API endpoints.",
+        "tests": [
+          "Extend the api_trace.spec.js tests to cover pagination (limit/offset) and ordering (most recent first, or as decided).",
+          "Add tests that simulate different kinds of events (user message, Orion LLM call, tool call) and assert that the trace API returns them with clear type and metadata fields.",
+          "Verify that invalid query parameters (e.g., negative limit, invalid filter values) produce clear 400 errors.",
+          "Add a test that ensures trace logging does not break the main chat flows even if the trace storage layer fails (e.g., DB error)."
+        ]
+      },
+      "devon": {
+        "goal": "Implement a trace logging service and expose it via /api/trace/logs.",
+        "steps": [
+          "Create a dedicated trace service module under backend/src/services or utils (depending on current conventions) that accepts TraceEvent objects and persists them (DB table or in-memory for now, but no silent loss without a log).",
+          "Add instrumentation in backend/src/routes/chatMessages.js to emit trace events for incoming user messages and outgoing Orion responses.",
+          "Add instrumentation in OrionAgent and DatabaseToolAgentAdapter (and FileSystemTool) to emit tool-related trace events with arguments and sanitized results.",
+          "Implement a new route handler (e.g., backend/src/routes/trace.js) that supports GET /api/trace/logs with limit/offset and filters, satisfying Tara’s tests.",
+          "Ensure failures in the trace service are logged but do not break the primary chat/DB flows (fail-loudly in trace, but do not silently corrupt chat behavior)."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Make Orion interactions inspectable."
+  },
+  {
+    "task_id": "2-1",
+    "title": "B3 – Frontend pop-out trace dashboard view",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Create a dashboard UI to inspect Orion traffic and tool calls.",
+      "area": "Trace Dashboard",
+      "notes": "New view with timeline + detail pane, accessible from chat UI; polls trace API."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Define what the trace dashboard must show and how it refreshes.",
+        "tests": [
+          "Create a frontend test file for the dashboard (e.g., frontend/src/__tests__/TraceDashboard.spec.js) that mounts the view with mocked API responses.",
+          "Add tests that verify a timeline list is rendered with events in the order returned by the API, showing at least type, timestamp, and a summary/label.",
+          "Add tests that when a timeline item is clicked, a detail pane is shown with expanded metadata (payload snippets, tool arguments, etc.).",
+          "Add tests that simulate periodic polling or a manual refresh action and assert that new events appear without breaking existing selection state."
+        ]
+      },
+      "devon": {
+        "goal": "Build a pop-out (or separate route) dashboard that consumes the trace API.",
+        "steps": [
+          "Add a new route-level view in frontend/src/views (e.g., TraceDashboard.vue) and a corresponding route entry in frontend/src/router.",
+          "Design a two-pane layout: left pane for a scrollable event list, right pane for event details.",
+          "Implement a small data layer (in a composable or store) that calls /api/trace/logs with pagination and optional filters (e.g., current project).",
+          "Wire up a button from the main UI (near ChatPanel) to open this dashboard (either as a new tab/window or an in-app route).",
+          "Ensure the dashboard handles errors gracefully (API failures), showing an inline error rather than crashing the app."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Visualize Orion pipelines and debugging info."
+  },
+  {
+    "task_id": "2-1",
+    "title": "C1 – Detect user scroll state to control auto-scroll",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Track whether user is at bottom of chat or has scrolled up.",
+      "area": "Chat UX",
+      "notes": "Extend handleScroll in ChatPanel to compute isAtBottom and set a userWantsAutoScroll flag."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Specify the observable behavior of auto-scroll vs. manual scroll for ChatPanel.",
+        "tests": [
+          "In ChatPanel tests, simulate scrolling to the bottom and sending messages; assert that auto-scroll remains enabled and new messages are visible at the bottom.",
+          "Simulate the user scrolling up (not at bottom), then send new messages; assert that the scroll position does not jump to the bottom.",
+          "Add tests that detect when the user scrolls back to the bottom and verify that auto-scroll is re-enabled for subsequent messages.",
+          "Add tests that verify internal flags (like userWantsAutoScroll) are correctly toggled based on scroll actions, via behavior assertions."
+        ]
+      },
+      "devon": {
+        "goal": "Implement robust detection of user scroll state in ChatPanel.vue.",
+        "steps": [
+          "In ChatPanel.vue, extend handleScroll to compute isAtBottom using scrollTop, clientHeight, and scrollHeight, with a small threshold so tiny offsets still count as bottom.",
+          "Introduce a reactive flag (e.g., userWantsAutoScroll) that is set to false when the user scrolls up away from the bottom, and true when they return to the bottom.",
+          "Refactor the existing watch(messages) so it only calls scrollToBottom() when userWantsAutoScroll is true.",
+          "Ensure that this logic also cooperates with streaming updates (from A-tasks) so that partial chunks respect the user’s scroll preference."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Preconditions for pausing auto-scroll."
+  },
+  {
+    "task_id": "2-1",
+    "title": "C2 – Pause/resume auto-scroll when user scrolls",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Stop auto-scroll when user scrolls up; resume when they return to bottom.",
+      "area": "Chat UX",
+      "notes": "Condition the messages watcher on userWantsAutoScroll; add optional \"new messages below\" pill."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Fully specify paused auto-scroll behavior and visible cues.",
+        "tests": [
+          "Extend ChatPanel tests so that when the user scrolls up and new messages arrive, a \"new messages below\" indicator appears while the scroll position stays fixed.",
+          "Add a test that clicking the indicator scrolls to the bottom and clears the indicator.",
+          "Verify that once the user is back at the bottom (via the indicator or manual scroll), subsequent messages auto-scroll again.",
+          "Add tests ensuring that the paused state is purely per-session (no persistence across reloads) and doesn't bleed into other chat instances, if any."
+        ]
+      },
+      "devon": {
+        "goal": "Implement auto-scroll pause/resume and UX indicator in ChatPanel.",
+        "steps": [
+          "Build on C1’s userWantsAutoScroll flag to gate the auto-scroll behavior in the messages watcher.",
+          "Add reactive state for \"hasNewMessagesWhilePaused\" that toggles when new messages arrive while userWantsAutoScroll is false.",
+          "Render a small pill or banner (e.g., \"New messages below\") in the ChatPanel when hasNewMessagesWhilePaused is true and wire it to scrollToBottom() + re-enable userWantsAutoScroll when clicked.",
+          "Make sure this works for both streaming responses and one-shot responses, and that there are no race conditions between rapid incoming messages and user scrolling."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Respect user scroll intent in chat."
+  },
+  {
+    "task_id": "2-1",
+    "title": "D1 – Implement 3-line clamp + expand for latest user message",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Limit visible height of the latest user message to ~3 lines, expandable.",
+      "area": "Chat Layout",
+      "notes": "Add isExpanded flag per message and clamp user message block with Show more/Show less toggle."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Define expectations for clamping and expanding long user messages.",
+        "tests": [
+          "Create frontend tests that mount ChatPanel with a very long user message and assert that only ~3 lines are visible by default (use CSS classes like line-clamp or max-height-based assertions).",
+          "Add a test that clicking \"Show more\" reveals the full message and toggles the control text to \"Show less\".",
+          "Add a test that clicking \"Show less\" re-applies the clamp without breaking scroll position or selection.",
+          "Verify that short messages (<= 3 lines) do not show the Show more/less controls at all."
+        ]
+      },
+      "devon": {
+        "goal": "Implement clamped + expandable layout for the latest user message in ChatPanel.",
+        "steps": [
+          "Extend message objects with an isExpanded flag, defaulting to false for new user messages.",
+          "In the ChatPanel template, wrap user message text in a container that applies a 3-line clamp (Tailwind line-clamp utilities or custom CSS) when !isExpanded and full height when isExpanded.",
+          "Render a Show more / Show less toggle only when the content exceeds the clamp height; this can be approximated or derived from message length.",
+          "Ensure that expansion/collapse does not interfere with auto-scroll behavior (C-tasks) or with the streaming state of subsequent AI messages."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Improve readability of long user prompts."
+  },
+  {
+    "task_id": "2-1",
+    "title": "D2 – Refine layout so new message is visually highlighted",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Make the newest user message easy to locate while preserving scrollable history.",
+      "area": "Chat Layout",
+      "notes": "Ensure after send, the latest user message is visible with clamp applied; keep infinite scroll for history."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Clarify how the latest user message should be positioned and styled.",
+        "tests": [
+          "Add tests that after sending a new user message, the viewport scrolls just enough to fully reveal that message (within clamp) while keeping history accessible above.",
+          "Add tests that verify a subtle visual highlight (e.g., background or border) is applied to the most recent user message and removed when a newer message is sent.",
+          "Ensure that infinite scroll upwards (loading older messages) does not break the highlight behavior for the truly latest message.",
+          "Confirm that the highlighted behavior works correctly for both short and clamped long messages."
+        ]
+      },
+      "devon": {
+        "goal": "Adjust ChatPanel layout and styling so new messages stand out without breaking scroll.",
+        "steps": [
+          "Introduce a way to identify the latest user message in the messages array (e.g., by index or a flag) and apply a distinct CSS class for visual emphasis (background/border).",
+          "Ensure that after handleSendMessage runs, the panel scrolls such that the latest message is within view but does not unnecessarily overscroll past it.",
+          "Verify that loading older messages at the top via infinite scroll does not change which message is flagged as \"latest\".",
+          "Keep all structural changes minimal so they do not conflict with existing Tailwind styles or break tests for existing behaviors."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Align new-message behavior with desired UX."
+  },
+  {
+    "task_id": "2-1",
+    "title": "E1 – Identify and reproduce silent error path in DatabaseTool.js",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Find where DatabaseTool is swallowing errors instead of surfacing them.",
+      "area": "DatabaseTool",
+      "notes": "Run relevant Jest suites and inspect try/catch blocks that only log without rethrowing."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Make the silent error behavior explicit via tests.",
+        "tests": [
+          "In backend/src/_test_/database_tool_agent_adapter.spec.js and/or orion_db_surface_v1_1.spec.js, add tests that simulate DB failures (e.g., mock db.query to throw) and assert that the error surfaces through DatabaseToolAgentAdapter and up to the caller, not swallowed.",
+          "Add a test that specifically demonstrates the current silent failure (if reproducible) so Devon has a clear red case to fix.",
+          "Ensure tests assert both error messages and that no successful-looking payload is returned in error scenarios.",
+          "Avoid tying tests to logging side effects; focus on throw vs. no-throw behavior and error propagation."
+        ]
+      },
+      "devon": {
+        "goal": "Locate and understand the silent error path before changing behavior.",
+        "steps": [
+          "Run the updated Jest suites to see where tests fail due to silent error behavior.",
+          "Inspect backend/tools/DatabaseTool.js for try/catch blocks that log errors but do not rethrow, paying special attention to create_*/update_* methods and any generic query wrappers.",
+          "Trace the execution path from the failing test through DatabaseToolAgentAdapter to DatabaseTool to identify the exact spot where an error is lost.",
+          "Document the problematic path in comments or a short DEV note, including before/after behavior expectations, before modifying code in E2."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Prepare to fix silent DB failures."
+  },
+  {
+    "task_id": "2-1",
+    "title": "E2 – Refactor DatabaseTool error handling to fail loudly",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Ensure all critical DatabaseTool operations throw descriptive errors on failure.",
+      "area": "DatabaseTool",
+      "notes": "Tighten error handling on core methods; keep logging helpers non-fatal. Update tests accordingly."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Lock in the new error-handling contract.",
+        "tests": [
+          "Expand the E1 tests so that once Devon refactors, they assert that DatabaseTool methods throw errors with clear, namespaced messages (e.g., DatabaseTool.create_subtask failed: ...).",
+          "Add tests ensuring that logging helpers (e.g., _addToActivityLog) are allowed to fail quietly without causing primary operations to throw, as long as this is intentional.",
+          "Verify that API-level tests (e.g., api_chat_messages.spec.js) receive 5xx responses with the error details surfaced (where appropriate) rather than hanging or returning success."
+        ]
+      },
+      "devon": {
+        "goal": "Refactor DatabaseTool methods to align with the no-silent-failure policy.",
+        "steps": [
+          "Based on E1 findings, modify core DatabaseTool methods (create_feature, create_task, create_subtask, update_* methods, and generic query) to wrap internal errors in descriptive Error instances and rethrow them.",
+          "Ensure that each thrown error includes enough context (method name, key arguments) to be actionable during debugging.",
+          "Keep logging helpers and non-critical paths using console.error without rethrows, as long as the main operation has already succeeded and tests confirm this.",
+          "Re-run the Jest suite to ensure all tests added by Tara now pass and that no new silent error paths have been introduced."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Enforce no-silent-failure policy in DB layer."
+  },
+  {
+    "task_id": "2-1",
+    "title": "F1 – Implement remaining DatabaseToolAgentAdapter methods",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Add adapters for 11 remaining DatabaseTool functions.",
+      "area": "Tooling",
+      "notes": "Follow oneTool.md pattern: validate args, resolve projectId, call positional DatabaseTool API, return result."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Define expectations for each adapter method’s argument mapping and error behavior.",
+        "tests": [
+          "In backend/src/_test_/database_tool_agent_adapter.spec.js, add unit tests per adapter method (list_subtasks_for_task, get_feature_overview, list_subtasks_by_status, search_subtasks_by_keyword, update_*_sections, create_*, safe_query).",
+          "For each method, add a happy-path test that stubs the underlying DatabaseTool method and asserts it is called with the correct positional arguments derived from the args object.",
+          "Add error-path tests that verify missing required fields (e.g., task_id, feature_id, status, keyword) produce clear, namespaced error messages.",
+          "Ensure tests cover projectId resolution precedence: explicit project_id in args, then context.projectId, then default 'P1'."
+        ]
+      },
+      "devon": {
+        "goal": "Implement adapter methods that faithfully map args objects to DatabaseTool’s positional API.",
+        "steps": [
+          "Open backend/tools/DatabaseToolAgentAdapter.js and follow the existing pattern used by the working golden-path method (get_subtask_full_context).",
+          "For each remaining DatabaseTool function, add a corresponding async method that validates args, extracts required/optional fields, resolves projectId, and calls the correct DatabaseTool method with positional arguments.",
+          "Ensure no business logic is added in the adapter; it should remain a thin translation layer between tool-call JSON and DatabaseTool methods.",
+          "Keep error messages explicit and consistent so they match Tara’s test expectations and surface clearly through Orion."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Expand Orion DB tool coverage."
+  },
+  {
+    "task_id": "2-1",
+    "title": "F2 – Add tests for new DatabaseToolAgentAdapter methods",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Cover happy/error paths for each new adapter method.",
+      "area": "Tooling",
+      "notes": "Extend database_tool_agent_adapter.spec.js to assert argument mapping and error messages."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Complete test coverage for all new adapter methods.",
+        "tests": [
+          "Ensure each adapter method has at least one happy-path and one error-path test, as outlined in F1.",
+          "Add tests for edge cases such as null/undefined optional fields, extra unknown properties in args, and invalid value types.",
+          "Verify that errors thrown by underlying DatabaseTool methods are propagated verbatim (or with a clear wrapper) and not replaced by generic messages.",
+          "Confirm that adapter methods never mutate the args object passed in (pure translation only)."
+        ]
+      },
+      "devon": {
+        "goal": "Align adapter implementation with Tara’s expanded test suite.",
+        "steps": [
+          "Run the database_tool_agent_adapter.spec.js tests and fix any failing adapter methods by correcting argument order, validation, or error messages.",
+          "Ensure that projectId resolution logic is centralized or consistent across methods to reduce duplication and bugs.",
+          "Refactor adapter code for readability and maintainability once tests are green, without changing externally observed behavior.",
+          "Double-check that no adapter bypasses DatabaseTool or accesses the DB directly, preserving layered architecture."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Guardrail for new adapter layer."
+  },
+  {
+    "task_id": "2-1",
+    "title": "F3 – Verify FileSystemTool compatibility with single-args pattern",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Confirm all FS tools accept a single args object and behave correctly.",
+      "area": "Tooling",
+      "notes": "Review FileSystemTool functions and add tests if needed (read_file, write_to_file, list_files, search_files)."
+    },
+    "instruction": {
+      "tara": {
+        "goal": "Specify behavior and contract for FileSystemTool methods when called from Orion.",
+        "tests": [
+          "Create or extend a backend spec for FileSystemTool (e.g., backend/src/_test_/filesystem_tool.spec.js) that calls each tool with a single args object (path, content, recursive, regex, file_pattern).",
+          "Add tests ensuring that invalid args (missing path, invalid regex, unsupported patterns) produce clear, testable errors.",
+          "Add tests confirming that list_files and search_files respect the ignore rules (if any) and do not traverse outside allowed directories.",
+          "Ensure tests treat FileSystemTool as a pure tool layer (no DB assumptions, no business logic)."
+        ]
+      },
+      "devon": {
+        "goal": "Confirm and, if needed, adjust FileSystemTool to match the single-args tool contract.",
+        "steps": [
+          "Review backend/tools/FileSystemTool.js to ensure each exported tool function takes a single args object and accesses properties defensively (e.g., args.path).",
+          "Align parameter names and defaults with what functionDefinitions.js and Orion’s tool-call schema expect.",
+          "Fix any deviations found by Tara’s tests, such as functions that still expect positional arguments or fail silently on bad input.",
+          "Keep FileSystemTool side effects and error messages clear and explicit, matching the same no-silent-failure philosophy used for DatabaseTool."
+        ]
+      }
+    },
+    "reason": "F2-T1-S2: Ensure FS tools match Orion’s tool-call contract."
+  }
+]

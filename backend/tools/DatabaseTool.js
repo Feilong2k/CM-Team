@@ -51,6 +51,22 @@ class DatabaseTool {
         return result.rows.reverse(); // Return in ascending order
       },
       addMessage: async (externalId, sender, content, metadata = {}) => {
+        // First, check for a duplicate in the last 5 seconds
+        const duplicateCheck = await db.query(
+          `SELECT id FROM chat_messages 
+           WHERE external_id = $1 AND sender = $2 AND content = $3 
+           AND created_at > NOW() - INTERVAL '5 seconds'`,
+          [externalId, sender, content]
+        );
+        if (duplicateCheck.rows.length > 0) {
+          // Return the existing message
+          const existing = await db.query(
+            `SELECT * FROM chat_messages WHERE id = $1`,
+            [duplicateCheck.rows[0].id]
+          );
+          return existing.rows[0];
+        }
+
         const result = await db.query(
           `INSERT INTO chat_messages (external_id, sender, content, metadata, created_at, updated_at)
            VALUES ($1, $2, $3, $4, NOW(), NOW())
@@ -458,38 +474,68 @@ class DatabaseTool {
   async create_feature(projectId, external_id = null, title, status = 'pending', basic_info = {}, pcc = {}, cap = {}, red = {}, reason = '') {
     this._checkRole();
 
-    const project = projectId || 'P1';
-
-    let externalId = external_id;
-    if (!externalId) {
-      // Determine next feature number for this project
-      const res = await db.query(
-        'SELECT external_id FROM features WHERE external_id LIKE $1',
-        [`${project}-F%`]
-      );
-      let maxNum = 0;
-      for (const row of res.rows) {
-        const m = row.external_id && row.external_id.match(/F(\d+)/i);
-        if (m) {
-          const n = parseInt(m[1], 10);
-          if (!Number.isNaN(n)) maxNum = Math.max(maxNum, n);
-        }
+    try {
+      // Validate required parameters
+      if (!projectId || (typeof projectId === 'string' && projectId.trim() === '')) {
+        throw new Error('create_feature: projectId is required');
       }
-      externalId = `${project}-F${maxNum + 1}`;
+      if (!title || (typeof title === 'string' && title.trim() === '')) {
+        throw new Error('create_feature: title is required');
+      }
+
+      const project = projectId || 'P1';
+
+      let externalId = external_id;
+      if (!externalId) {
+        // Determine next feature number for this project
+        const res = await db.query(
+          'SELECT external_id FROM features WHERE external_id LIKE $1',
+          [`${project}-F%`]
+        );
+        let maxNum = 0;
+        for (const row of res.rows) {
+          const m = row.external_id && row.external_id.match(/F(\d+)/i);
+          if (m) {
+            const n = parseInt(m[1], 10);
+            if (!Number.isNaN(n)) maxNum = Math.max(maxNum, n);
+          }
+        }
+        externalId = `${project}-F${maxNum + 1}`;
+      }
+
+      // Validate externalId format
+      if (!externalId || !/^P\d+-F\d+$/i.test(externalId)) {
+        throw new Error(`create_feature: Invalid external_id format generated: ${externalId}`);
+      }
+
+      const insertRes = await db.query(
+        `INSERT INTO features (project_id, external_id, title, status, basic_info, pcc, pvp_analysis, fap_analysis, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+         RETURNING *`,
+        [project, externalId, title, status, basic_info, pcc, cap, red]
+      );
+
+      if (insertRes.rows.length === 0) {
+        throw new Error('create_feature: Failed to create feature - no rows returned');
+      }
+
+      const feature = insertRes.rows[0];
+
+      try {
+        await this._addToActivityLog('feature', feature.id, 'creation', reason || 'Created feature');
+      } catch (logError) {
+        console.error('create_feature: Failed to add activity log:', logError.message);
+        // Continue - logging failure shouldn't fail the operation
+      }
+
+      return feature;
+    } catch (error) {
+      const enhancedError = new Error(`DatabaseTool.create_feature failed: ${error.message}`);
+      enhancedError.originalError = error;
+      enhancedError.projectId = projectId;
+      enhancedError.title = title;
+      throw enhancedError;
     }
-
-    const insertRes = await db.query(
-      `INSERT INTO features (project_id, external_id, title, status, basic_info, pcc, pvp_analysis, fap_analysis, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-       RETURNING *`,
-      [project, externalId, title, status, basic_info, pcc, cap, red]
-    );
-
-    const feature = insertRes.rows[0];
-
-    await this._addToActivityLog('feature', feature.id, 'creation', reason || 'Created feature');
-
-    return feature;
   }
 
   /**
@@ -499,38 +545,68 @@ class DatabaseTool {
   async create_task(feature_id, external_id = null, title, status = 'pending', basic_info = {}, pcc = {}, cap = {}, reason = '') {
     this._checkRole();
 
-    const feature = await this._findFeatureByIdOrExternal(feature_id);
-
-    let externalId = external_id;
-    if (!externalId) {
-      const prefix = feature.external_id;
-      const res = await db.query(
-        'SELECT external_id FROM tasks WHERE external_id LIKE $1',
-        [`${prefix}-T%`]
-      );
-      let maxNum = 0;
-      for (const row of res.rows) {
-        const m = row.external_id && row.external_id.match(/T(\d+)/i);
-        if (m) {
-          const n = parseInt(m[1], 10);
-          if (!Number.isNaN(n)) maxNum = Math.max(maxNum, n);
-        }
+    try {
+      // Validate required parameters
+      if (!feature_id && feature_id !== 0) {
+        throw new Error('create_task: feature_id is required');
       }
-      externalId = `${prefix}-T${maxNum + 1}`;
+      if (!title || (typeof title === 'string' && title.trim() === '')) {
+        throw new Error('create_task: title is required');
+      }
+
+      const feature = await this._findFeatureByIdOrExternal(feature_id);
+
+      let externalId = external_id;
+      if (!externalId) {
+        const prefix = feature.external_id;
+        const res = await db.query(
+          'SELECT external_id FROM tasks WHERE external_id LIKE $1',
+          [`${prefix}-T%`]
+        );
+        let maxNum = 0;
+        for (const row of res.rows) {
+          const m = row.external_id && row.external_id.match(/T(\d+)/i);
+          if (m) {
+            const n = parseInt(m[1], 10);
+            if (!Number.isNaN(n)) maxNum = Math.max(maxNum, n);
+          }
+        }
+        externalId = `${prefix}-T${maxNum + 1}`;
+      }
+
+      // Validate externalId format
+      if (!externalId || !/^P\d+-F\d+-T\d+$/i.test(externalId)) {
+        throw new Error(`create_task: Invalid external_id format generated: ${externalId}`);
+      }
+
+      const insertRes = await db.query(
+        `INSERT INTO tasks (feature_id, external_id, title, status, basic_info, pcc, pvp_analysis, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+         RETURNING *`,
+        [feature.id, externalId, title, status, basic_info, pcc, cap]
+      );
+
+      if (insertRes.rows.length === 0) {
+        throw new Error('create_task: Failed to create task - no rows returned');
+      }
+
+      const task = insertRes.rows[0];
+
+      try {
+        await this._addToActivityLog('task', task.id, 'creation', reason || 'Created task');
+      } catch (logError) {
+        console.error('create_task: Failed to add activity log:', logError.message);
+        // Continue - logging failure shouldn't fail the operation
+      }
+
+      return task;
+    } catch (error) {
+      const enhancedError = new Error(`DatabaseTool.create_task failed: ${error.message}`);
+      enhancedError.originalError = error;
+      enhancedError.feature_id = feature_id;
+      enhancedError.title = title;
+      throw enhancedError;
     }
-
-    const insertRes = await db.query(
-      `INSERT INTO tasks (feature_id, external_id, title, status, basic_info, pcc, pvp_analysis, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-       RETURNING *`,
-      [feature.id, externalId, title, status, basic_info, pcc, cap]
-    );
-
-    const task = insertRes.rows[0];
-
-    await this._addToActivityLog('task', task.id, 'creation', reason || 'Created task');
-
-    return task;
   }
 
   /**
@@ -553,69 +629,101 @@ class DatabaseTool {
   ) {
     this._checkRole();
 
-    const task = await this._findTaskByIdOrExternal(task_id);
-
-    let externalId = external_id;
-    if (!externalId) {
-      const prefix = task.external_id;
-      const res = await db.query(
-        'SELECT external_id FROM subtasks WHERE external_id LIKE $1',
-        [`${prefix}-S%`]
-      );
-      let maxNum = 0;
-      for (const row of res.rows) {
-        const m = row.external_id && row.external_id.match(/S(\d+)/i);
-        if (m) {
-          const n = parseInt(m[1], 10);
-          if (!Number.isNaN(n)) maxNum = Math.max(maxNum, n);
-        }
-      }
-      externalId = `${prefix}-S${maxNum + 1}`;
-    }
-
-    const insertRes = await db.query(
-      `INSERT INTO subtasks (
-         task_id, external_id, title, status, workflow_stage,
-         parent_id, basic_info, instruction, pcc, activity_log,
-         tests, implementations, review, created_at, updated_at
-       )
-       VALUES ($1, $2, $3, $4, $5,
-               NULL, $6, $7, $8, $9,
-               $10, $11, $12, NOW(), NOW())
-       RETURNING *`,
-      [
-        task.id,
-        externalId,
-        title,
-        status,
-        workflow_stage,
-        basic_info,
-        instruction,
-        pcc,
-        [], // activity_log defaults to empty array
-        tests,
-        implementation,
-        review,
-      ]
-    );
-
-    const subtask = insertRes.rows[0];
-
-    // Subtask-specific log table
     try {
-      await db.query(
-        `INSERT INTO subtask_activity_logs (subtask_id, type, agent, content, status, metadata, timestamp)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [subtask.id, 'creation', 'Orion', reason || 'Created new subtask', 'open', {}]
+      // Validate required parameters
+      if (!task_id && task_id !== 0) {
+        throw new Error('create_subtask: task_id is required');
+      }
+      if (!title || (typeof title === 'string' && title.trim() === '')) {
+        throw new Error('create_subtask: title is required');
+      }
+
+      const task = await this._findTaskByIdOrExternal(task_id);
+
+      let externalId = external_id;
+      if (!externalId) {
+        const prefix = task.external_id;
+        const res = await db.query(
+          'SELECT external_id FROM subtasks WHERE external_id LIKE $1',
+          [`${prefix}-S%`]
+        );
+        let maxNum = 0;
+        for (const row of res.rows) {
+          const m = row.external_id && row.external_id.match(/S(\d+)/i);
+          if (m) {
+            const n = parseInt(m[1], 10);
+            if (!Number.isNaN(n)) maxNum = Math.max(maxNum, n);
+          }
+        }
+        externalId = `${prefix}-S${maxNum + 1}`;
+      }
+
+      // Validate externalId format
+      if (!externalId || !/^P\d+-F\d+-T\d+-S\d+$/i.test(externalId)) {
+        throw new Error(`create_subtask: Invalid external_id format generated: ${externalId}`);
+      }
+
+      const insertRes = await db.query(
+        `INSERT INTO subtasks (
+           task_id, external_id, title, status, workflow_stage,
+           parent_id, basic_info, instruction, pcc, activity_log,
+           tests, implementations, review, created_at, updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5,
+                 NULL, $6, $7, $8, $9,
+                 $10, $11, $12, NOW(), NOW())
+         RETURNING *`,
+        [
+          task.id,
+          externalId,
+          title,
+          status,
+          workflow_stage,
+          basic_info,
+          instruction,
+          pcc,
+          [], // activity_log defaults to empty array
+          tests,
+          implementation,
+          review,
+        ]
       );
-    } catch (e) {
-      // best-effort only
+
+      if (insertRes.rows.length === 0) {
+        throw new Error('create_subtask: Failed to create subtask - no rows returned');
+      }
+
+      const subtask = insertRes.rows[0];
+
+      // Subtask-specific log table
+      try {
+        await db.query(
+          `INSERT INTO subtask_activity_logs (subtask_id, type, agent, content, status, metadata, timestamp)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+          [subtask.id, 'creation', 'Orion', reason || 'Created new subtask', 'open', {}]
+        );
+      } catch (e) {
+        console.error('create_subtask: Failed to create subtask_activity_logs entry:', e.message);
+        // Continue - this is non-critical logging
+      }
+
+      // Unified activity log
+      try {
+        await this._addToActivityLog('subtask', subtask.id, 'creation', reason || 'Created new subtask');
+      } catch (logError) {
+        console.error('create_subtask: Failed to add unified activity log:', logError.message);
+        // Continue - logging failure shouldn't fail the operation
+      }
+
+      return subtask;
+    } catch (error) {
+      // Add context to the error message
+      const enhancedError = new Error(`DatabaseTool.create_subtask failed: ${error.message}`);
+      enhancedError.originalError = error;
+      enhancedError.task_id = task_id;
+      enhancedError.title = title;
+      throw enhancedError;
     }
-
-    // Unified activity log
-    await this._addToActivityLog('subtask', subtask.id, 'creation', reason || 'Created new subtask');
-
-    return subtask;
   }
 
   _checkRole() {

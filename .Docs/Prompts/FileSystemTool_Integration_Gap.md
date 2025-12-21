@@ -1,8 +1,14 @@
 # FileSystemTool Integration Gap Analysis
 
-## Current State
+## Current State (Historical; pre-F2-T1)
 
-Currently, **Orion cannot use `list_files` and `search_files` directly as tool calls** inside the app because they are not registered in the tool registry. Here's the current state:
+This document describes the state **before** FileSystemTool was fully implemented and registered for Orion. As of F2-T1:
+- `FileSystemTool_read_file`, `FileSystemTool_write_to_file`, `FileSystemTool_list_files`, and `FileSystemTool_search_files` are implemented in `backend/tools/FileSystemTool.js`.
+- These tools are exposed to Orion via the role-based registry in `backend/tools/registry.js` and available for LLM tool-calls.
+
+The sections below are kept for historical context but no longer reflect the current implementation status.
+
+Previously, **Orion could not use `list_files` and `search_files` directly as tool calls** inside the app because they were not registered in the tool registry. Here's the historical state:
 
 ## Current Integration Status:
 

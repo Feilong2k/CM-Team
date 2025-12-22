@@ -18,6 +18,16 @@ function computeContentHash(content) {
   return hash >>> 0;
 }
 
+function safeToolName(call) {
+  // Tool call shapes vary by provider and by streaming partials.
+  // We only accept fully-formed OpenAI-style: { function: { name: string, arguments: string } }
+  if (!call || typeof call !== 'object') return null;
+  const fn = call.function;
+  if (!fn || typeof fn !== 'object') return null;
+  if (typeof fn.name !== 'string' || fn.name.trim() === '') return null;
+  return fn.name;
+}
+
 /**
  * OrionAgent - The orchestrator agent that extends BaseAgent.
  * Handles context building, logging, and conversation management.
@@ -84,11 +94,11 @@ class OrionAgent extends BaseAgent {
       try {
         const rootDir = process.cwd(); // Assuming we are in project root or backend
         // If cwd is c:\\Coding\\CM-TEAM, then backend is a subdir.
-        
+
         // Simple recursive list implementation for whitelisted dirs
         const whitelist = ['backend', 'frontend', '.Docs', 'src'];
         const files = [];
-        
+
         for (const dir of whitelist) {
             const fullPath = path.join(rootDir, dir);
             if (fs.existsSync(fullPath)) {
@@ -97,7 +107,7 @@ class OrionAgent extends BaseAgent {
                     for (const entry of entries) {
                         const res = path.resolve(dirPath, entry.name);
                         const relPath = path.relative(rootDir, res);
-                        
+
                         // Ignore node_modules, .git, etc.
                         if (relPath.includes('node_modules') || relPath.includes('.git') || relPath.includes('dist') || relPath.includes('build')) {
                             continue;
@@ -139,7 +149,7 @@ class OrionAgent extends BaseAgent {
    */
   async _prepareRequest(projectId, userMessage, options = {}) {
     const { mode = 'plan' } = options;
-    
+
     if (!projectId || !userMessage) {
       throw new Error('projectId and userMessage are required');
     }
@@ -162,14 +172,9 @@ class OrionAgent extends BaseAgent {
     // (which happens because we just saved it to DB), we should NOT append it again.
     let formattedHistory = this.formatChatHistory(context.chatHistory);
     const lastMsg = formattedHistory[formattedHistory.length - 1];
-    
+
     // If history already contains the user message as the last item, don't append it again
     if (lastMsg && lastMsg.role === 'user' && lastMsg.content === userMessage) {
-        // We do nothing, the history already covers it.
-        // Actually, for safety, let's just use the history as is, assuming getMessages(20) fetched the latest.
-        // BUT, if getMessages is stale or eventually consistent, it might be missing.
-        // Safer logic: Filter out the last message from history IF it matches, then always append userMessage.
-        // This ensures userMessage is always the last item and we don't duplicate.
         formattedHistory.pop();
     }
 
@@ -340,10 +345,10 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
       // Database uses 'sender', but we might have 'role' in some contexts
       const rawRole = msg.role || msg.sender;
       let role = rawRole;
-      
+
       if (rawRole === 'orion') role = 'assistant';
       // 'user' and 'system' are valid roles
-      
+
       return {
         role,
         content: msg.content
@@ -403,141 +408,140 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
 
     try {
       // Log tool registration snapshot for streaming session
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: 'tool_registration',
-        source: 'system',
-        timestamp: new Date().toISOString(),
-        summary: 'Streaming tool registry for Orion',
-        details: { tools: Object.keys(this.tools || {}) },
-        requestId: options.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for tool registration (streaming):', err);
-    }
-
-    let iteration = 0;
-    const maxIterations = 5;
-    let continueLoop = true;
-
-    // (moved above into the outer scope so finally{} can always flush probes)
-
-    // Define allowed read-only tools for PLAN mode
-    const PLAN_MODE_WHITELIST = [
-      'read_file', 'list_files', 'search_files', 'list_code_definition_names',
-      'DatabaseTool_get_subtask_full_context',
-      'DatabaseTool_list_subtasks_by_status',
-      'DatabaseTool_search_subtasks'
-    ];
-
-    while (continueLoop && iteration < maxIterations) {
-      iteration++;
-
-      // Filter out any malformed or empty messages before passing to the adapter.
-      const safeMessages = messages
-        .filter(m =>
-          m &&
-          typeof m === 'object' &&
-          typeof m.role === 'string' &&
-          typeof m.content === 'string' &&
-          m.content.trim() !== ''
-        )
-        .map(m => ({ role: m.role, content: m.content }));
-
-      const adapterStream = this.adapter.sendMessagesStreaming(safeMessages, {
-        temperature: mode === 'plan' ? 0.7 : 0.3,
-        max_tokens: 8192,
-        tools: functionDefinitions, // Always provide tool definitions, filtering happens at execution time
-        context: { projectId, requestId: options.requestId },
-      });
-
-      let toolCallsFromStream = [];
-
-      for await (const event of adapterStream) {
-        if (event.chunk) {
-          fullContentProbe += event.chunk;
-        }
-        if (event.toolCalls) {
-          toolCallsFromStream = event.toolCalls;
-        }
-        // Yield everything to the frontend (chunks, done, etc.)
-        yield event;
+      try {
+        await TraceService.logEvent({
+          projectId,
+          type: 'tool_registration',
+          source: 'system',
+          timestamp: new Date().toISOString(),
+          summary: 'Streaming tool registry for Orion',
+          details: { tools: Object.keys(this.tools || {}) },
+          requestId: options.requestId,
+        });
+      } catch (err) {
+        console.error('Trace logging failed for tool registration (streaming):', err);
       }
 
-      // If we got tool calls, we need to handle them (execute + inject result + loop)
-      if (toolCallsFromStream.length > 0) {
-        // Filter tools based on mode
-        const allowedToolCalls = [];
-        const blockedToolCalls = [];
+      let iteration = 0;
+      const maxIterations = 5;
+      let continueLoop = true;
 
-        for (const call of toolCallsFromStream) {
-          const toolName = call.function.name;
-          // In PLAN mode, check whitelist. In ACT mode, allow all.
-          if (mode === 'plan' && !PLAN_MODE_WHITELIST.some(allowed => toolName.startsWith(allowed) || toolName === allowed)) {
-             blockedToolCalls.push(call);
-          } else {
-             allowedToolCalls.push(call);
+      // Define allowed read-only tools for PLAN mode
+      const PLAN_MODE_WHITELIST = [
+        'read_file', 'list_files', 'search_files', 'list_code_definition_names',
+        'DatabaseTool_get_subtask_full_context',
+        'DatabaseTool_list_subtasks_by_status',
+        'DatabaseTool_search_subtasks'
+      ];
+
+      while (continueLoop && iteration < maxIterations) {
+        iteration++;
+
+        // Filter out any malformed or empty messages before passing to the adapter.
+        const safeMessages = messages
+          .filter(m =>
+            m &&
+            typeof m === 'object' &&
+            typeof m.role === 'string' &&
+            typeof m.content === 'string' &&
+            m.content.trim() !== ''
+          )
+          .map(m => ({ role: m.role, content: m.content }));
+
+        const adapterStream = this.adapter.sendMessagesStreaming(safeMessages, {
+          temperature: mode === 'plan' ? 0.7 : 0.3,
+          max_tokens: 8192,
+          tools: functionDefinitions, // Always provide tool definitions, filtering happens at execution time
+          context: { projectId, requestId: options.requestId },
+        });
+
+        let toolCallsFromStream = [];
+
+        for await (const event of adapterStream) {
+          if (event.chunk) {
+            fullContentProbe += event.chunk;
           }
+          if (event.toolCalls) {
+            toolCallsFromStream = event.toolCalls;
+          }
+          // Yield everything to the frontend (chunks, done, etc.)
+          yield event;
         }
 
-        // Handle blocked tools (yield a system message to user, do not execute)
-        if (blockedToolCalls.length > 0) {
-          const blockedMsg = `\n\n**System Notice:** The following tool calls were blocked because they are not allowed in PLAN mode: ${blockedToolCalls.map(c => c.function.name).join(', ')}. Switch to ACT mode to execute write operations.`;
-          
-          // Yield as a text chunk so user sees it
-          yield { chunk: blockedMsg };
-          
-          // Add to history so model knows it failed/was blocked
-          messages.push({
-            role: 'system',
-            content: `Refusal: The tool calls [${blockedToolCalls.map(c => c.function.name).join(', ')}] were blocked by system policy because the user is in PLAN mode. You must ask the user to switch to ACT mode if these actions are required.`
-          });
-        }
+        // If we got tool calls, we need to handle them (execute + inject result + loop)
+        if (toolCallsFromStream.length > 0) {
+          // Filter tools based on mode
+          const allowedToolCalls = [];
+          const blockedToolCalls = [];
 
-        // Execute allowed tools
-        if (allowedToolCalls.length > 0) {
-           // We use handleToolCalls (via ToolRunner) which returns results
-           const results = await this.handleToolCalls(allowedToolCalls, context);
+          for (const call of toolCallsFromStream) {
+            const toolName = safeToolName(call);
+            if (!toolName) {
+              // Ignore partial/invalid streamed tool_call entries
+              continue;
+            }
+            // In PLAN mode, check whitelist. In ACT mode, allow all.
+            if (mode === 'plan' && !PLAN_MODE_WHITELIST.some(allowed => toolName.startsWith(allowed) || toolName === allowed)) {
+               blockedToolCalls.push(call);
+            } else {
+               allowedToolCalls.push(call);
+            }
+          }
 
-           for (const result of results) {
-              const toolLabel = result.toolName || 'tool';
-              const resultJson = JSON.stringify(result.result, null, 2);
+          // Handle blocked tools (yield a system message to user, do not execute)
+          if (blockedToolCalls.length > 0) {
+            const blockedMsg = `\n\n**System Notice:** The following tool calls were blocked because they are not allowed in PLAN mode: ${blockedToolCalls.map(c => safeToolName(c)).filter(Boolean).join(', ')}. Switch to ACT mode to execute write operations.`;
 
-              // Surface the tool result back to the model AND the stream
-              const header = '═══════════════════════════════════════════════════════════════════════════════';
-              const titleLine = `TOOL RESULT: ${toolLabel}`;
-              const boxed = [
-                header,
-                titleLine,
-                header,
-                resultJson,
-                header,
-              ].join('\n');
+            // Yield as a text chunk so user sees it
+            yield { chunk: blockedMsg };
 
-              // 1. Yield to stream so frontend sees it immediately
-              // We prepend a newline to ensure separation.
-              yield { chunk: `\n\n${boxed}\n\n` };
+            // Add to history so model knows it failed/was blocked
+            messages.push({
+              role: 'system',
+              content: `Refusal: The tool calls [${blockedToolCalls.map(c => safeToolName(c)).filter(Boolean).join(', ')}] were blocked by system policy because the user is in PLAN mode. You must ask the user to switch to ACT mode if these actions are required.`
+            });
+          }
 
-              // 2. Add to history for next iteration
-              messages.push({
-                role: 'system',
-                content: boxed,
-              });
-           }
+          // Execute allowed tools
+          if (allowedToolCalls.length > 0) {
+             // We use handleToolCalls (via ToolRunner) which returns results
+             const results = await this.handleToolCalls(allowedToolCalls, context);
+
+             for (const result of results) {
+                const toolLabel = result.toolName || 'tool';
+                const resultJson = JSON.stringify(result.result, null, 2);
+
+                // Surface the tool result back to the model AND the stream
+                const header = '═══════════════════════════════════════════════════════════════════════════════';
+                const titleLine = `TOOL RESULT: ${toolLabel}`;
+                const boxed = [
+                  header,
+                  titleLine,
+                  header,
+                  resultJson,
+                  header,
+                ].join('\n');
+
+                // 1. Yield to stream so frontend sees it immediately
+                // We prepend a newline to ensure separation.
+                yield { chunk: `\n\n${boxed}\n\n` };
+
+                // 2. Add to history for next iteration
+                messages.push({
+                  role: 'system',
+                  content: boxed,
+                });
+             }
+          }
+
+          // If we had tool calls (blocked or allowed), we continue the loop to let the model generate the next response based on the results/refusals.
+          continueLoop = true;
+
         } else {
-           // If all tools were blocked, and we added a refusal message, we still want to continue loop
-           // to let the model apologize/explain.
+          // No tool calls in this turn, we are done.
+          continueLoop = false;
         }
-        
-        // If we had tool calls (blocked or allowed), we continue the loop to let the model generate the next response based on the results/refusals.
-        continueLoop = true;
-
-      } else {
-        // No tool calls in this turn, we are done.
-        continueLoop = false;
       }
-    }
 
     } finally {
       // Duplication probe: log what OrionAgent saw as full streamed content (by concatenating chunks)
@@ -603,8 +607,8 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
       /^list_files$/,
       /^search_files$/,
       /^list_code_definition_names$/,
-      /^DatabaseTool_get_/,
-      /^DatabaseTool_list_/,
+      /^DatabaseTool_get_/, 
+      /^DatabaseTool_list_/, 
       /^DatabaseTool_search_/,
     ];
     const filtered = {};

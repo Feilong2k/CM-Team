@@ -136,6 +136,15 @@ async function executeToolCalls(tools, toolCalls, context) {
     let finalResult = undefined;
     let finalError = undefined;
 
+    function isDeterministicNonRetryable(err) {
+      const msg = (err && err.message) ? String(err.message) : '';
+      // Database "not found" type errors are deterministic; retrying just spams logs.
+      if (/not found/i.test(msg)) return true;
+      // Missing project context is also deterministic.
+      if (/MISSING_PROJECT_CONTEXT/i.test(msg)) return true;
+      return false;
+    }
+
     while (attempts < maxAttempts && !success) {
       attempts += 1;
       try {
@@ -143,6 +152,12 @@ async function executeToolCalls(tools, toolCalls, context) {
         success = true;
       } catch (error) {
         finalError = error;
+
+        // If this is a deterministic error, do not retry.
+        if (isDeterministicNonRetryable(error)) {
+          break;
+        }
+
         if (attempts >= maxAttempts) {
           break;
         }

@@ -511,7 +511,22 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
 
           for (const result of results) {
             const toolLabel = result.toolName || 'tool';
-            const resultJson = JSON.stringify(result.result, null, 2);
+
+            // ToolRunner returns a structured object:
+            // { success, result? } on success, or { success:false, error, details? } on failure.
+            // Previously we only boxed `result.result`, which is undefined on failures,
+            // causing Orion to see an empty tool result box.
+            const payload = result.success
+              ? { ok: true, result: result.result }
+              : {
+                  ok: false,
+                  error: result.error || 'Unknown tool error',
+                  details: result.details || null,
+                  attempts: result.attempts || 0,
+                  toolCallId: result.toolCallId || null,
+                };
+
+            const resultJson = JSON.stringify(payload, null, 2);
 
             const header = '═══════════════════════════════════════════════════════════════════════════════';
             const titleLine = `TOOL RESULT: ${toolLabel}`;

@@ -14,7 +14,7 @@ class StreamingService {
   async *streamFromAdapter(adapterStream) {
     let fullContent = '';
     let doneSeen = false;
-    let finalContent = null;
+    let finalContentFromUpstream = null;
     let errorSeen = null;
 
     try {
@@ -22,7 +22,7 @@ class StreamingService {
         // Adapter/agent yields objects with 'chunk' or 'error' or 'done' properties
         if (event.chunk) {
           fullContent += event.chunk;
-          if (!doneSeen && !errorSeen) {
+          if (!errorSeen) {
             yield { chunk: event.chunk };
           }
           continue;
@@ -36,22 +36,31 @@ class StreamingService {
         }
 
         if (event.done) {
+          // IMPORTANT:
+          // Do NOT emit `done` immediately. The agent may still yield additional
+          // chunks (e.g., TOOL RESULT boxes) after its first done marker.
+          // If we emit done early, the frontend will finalize and may overwrite
+          // content, making tool results appear then disappear.
           doneSeen = true;
-          finalContent = event.fullContent || fullContent;
-          // Emit done to the client, but keep consuming upstream.
-          yield { done: true, fullContent: finalContent };
+          finalContentFromUpstream = event.fullContent || finalContentFromUpstream;
           continue;
         }
 
-        // Unknown event shape: forward it unless stream already ended
-        if (!doneSeen && !errorSeen) {
+        // Forward non-chunk events (e.g., toolCalls) only until an error.
+        if (!errorSeen) {
           yield event;
         }
       }
 
-      // If we never saw a done event, emit one at end.
-      if (!doneSeen && !errorSeen) {
-        yield { done: true, fullContent };
+      // Emit a single done event at end.
+      if (!errorSeen) {
+        if (doneSeen) {
+          // Prefer the actual concatenated chunks (includes tool results). Fall back
+          // to upstream fullContent if nothing was chunked.
+          yield { done: true, fullContent: fullContent || finalContentFromUpstream || '' };
+        } else {
+          yield { done: true, fullContent };
+        }
       }
     } catch (error) {
       console.error('Stream from adapter error:', error);

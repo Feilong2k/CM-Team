@@ -65,22 +65,39 @@
         </button>
       </div>
       <div class="flex-1">
-        <MessageInput @send="handleSendMessage" />
+        <MessageInput 
+          @send="handleSendMessage" 
+          v-model="draftMessage"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, nextTick, watch, computed } from 'vue'
+import { useUIStore } from '../stores/uiStore'
 import MessageInput from './MessageInput.vue'
 import { renderMarkdown } from '../utils/markdown.js'
 import { streamOrionReply } from '../utils/streamOrionReply.js'
 
+const uiStore = useUIStore()
+
 // Reactive array of messages
 const messages = ref([])
-// Current mode (default: 'plan')
-const currentMode = ref('plan')
+
+// Map local currentMode to store state
+const currentMode = computed({
+  get: () => uiStore.chatMode,
+  set: (val) => uiStore.setChatMode(val)
+})
+
+// Map draft message to store state
+const draftMessage = computed({
+  get: () => uiStore.draftMessage,
+  set: (val) => uiStore.setDraftMessage(val)
+})
+
 // Reference to messages container for scrolling
 const messagesContainer = ref(null)
 // Loading states
@@ -128,6 +145,7 @@ const loadInitialMessages = async () => {
     
     // Convert API messages to component format
     messages.value = data.map(msg => ({
+      id: msg.id, // Store ID for deduplication
       type: msg.sender === 'user' ? 'user' : 'ai',
       content: msg.content,
       html: msg.sender === 'user' ? null : renderMarkdown(msg.content),
@@ -170,19 +188,25 @@ const loadOlderMessages = async () => {
     
     // Convert API messages to component format and prepend to existing messages
     const olderMessages = data.map(msg => ({
+      id: msg.id, // Store ID for deduplication
       type: msg.sender === 'user' ? 'user' : 'ai',
       content: msg.content,
       html: msg.sender === 'user' ? null : renderMarkdown(msg.content),
       createdAt: msg.created_at
     })).reverse()
     
+    // Deduplicate: filter out any older messages that are already in the array
+    // (based on ID) to prevent double-display if offset/limit overlaps
+    const existingIds = new Set(messages.value.map(m => m.id).filter(id => id !== undefined))
+    const uniqueOlderMessages = olderMessages.filter(m => !existingIds.has(m.id))
+
     // Store current scroll position and height before updating
     const container = messagesContainer.value
     const scrollTopBefore = container ? container.scrollTop : 0
     const scrollHeightBefore = container ? container.scrollHeight : 0
     
     // Prepend older messages (they come in chronological order, newest first after reverse)
-    messages.value = [...olderMessages, ...messages.value]
+    messages.value = [...uniqueOlderMessages, ...messages.value]
     
     currentOffset.value += data.length
     hasMoreMessages.value = data.length === limit
@@ -237,6 +261,9 @@ const handleSendMessage = async (messageText) => {
   // Prevent duplicate sending if already streaming the last message
   const lastMsg = messages.value[messages.value.length - 1]
   if (lastMsg && lastMsg.isStreaming) return
+
+  // Clear draft immediately on send
+  draftMessage.value = ''
 
   // Add user message
   messages.value.push({
@@ -315,10 +342,14 @@ const handleSendMessage = async (messageText) => {
 
       const data = await response.json()
       if (aiMessage) {
+        // Update placeholder with real content and ID so deduplication works
         const content = data.message || ''
         aiMessage.content = content
         aiMessage.html = renderMarkdown(content)
         aiMessage.isStreaming = false
+        if (data.id) {
+          aiMessage.id = data.id
+        }
       }
     }
   } catch (error) {

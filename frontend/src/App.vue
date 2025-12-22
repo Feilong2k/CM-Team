@@ -75,21 +75,24 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, computed } from 'vue'
+import { useUIStore } from './stores/uiStore'
 import ChatPanel from './components/ChatPanel.vue'
 import FeatureTree from './components/FeatureTree.vue'
 import TraceDashboard from './components/TraceDashboard.vue'
 
-const traceVisible = ref(false)
+const uiStore = useUIStore()
 const currentProjectId = ref('P1')
+
+// Use store state for persistence
+const traceVisible = computed(() => uiStore.traceVisible)
 
 const handleSendMessage = (message) => {
   console.log('Message sent:', message)
-  // For now, just log. In a real app, this would be sent to the backend.
 }
 
 const toggleTrace = () => {
-  traceVisible.value = !traceVisible.value
+  uiStore.toggleTrace()
 }
 
 const features = ref([])

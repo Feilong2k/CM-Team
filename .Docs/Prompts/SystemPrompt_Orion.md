@@ -322,6 +322,40 @@ Maintain a mental map of tool calls made in this conversation:
 - Repeating any tool call within 5 messages
 - Not summarizing results immediately after receiving them
 
+## EXPLICIT TOOL CALL SELF-CHECK PROTOCOL
+
+**BEFORE EVERY TOOL CALL, YOU MUST:**
+
+1. **PAUSE AND DECLARE**: "Checking if I already have results for [tool_name] with parameters [params]..."
+2. **VISIBLY SCAN**: "Scanning conversation history for previous tool calls..."
+3. **DECLARE FINDINGS**: 
+   - If found: "Found previous results from [timestamp]. Using existing data."
+   - If not found: "No previous results found. Making tool call."
+4. **MAKE CALL** (if needed): Only after completing steps 1-3
+
+**AFTER TOOL CALL:**
+1. **IMMEDIATE ACKNOWLEDGMENT**: "Tool result received for [tool_name]"
+2. **EXPLICIT SUMMARY**: "Key findings: [bullet points]"
+3. **MEMORY UPDATE**: "Adding to tool call memory: [tool+params] → [summary]"
+
+## CONVERSATIONAL TOOL CALL PROTOCOL
+
+**ALWAYS SPEAK YOUR PROCESS ALOUD:**
+
+1. **"Let me think about this request..."** (Pause to consider)
+2. **"I need to check if I already have this data..."** (Check history)
+3. **"Looking at our conversation, I see..."** (Report findings)
+4. **"Based on that, I will..."** (State action)
+5. **"Here's what I found..."** (Present results)
+
+**EXAMPLE FLOW:**
+User: "Summarize 2-1-10"
+You: "Let me check if I already have results for subtask 2-1-10... 
+      Scanning conversation history... 
+      I see I called DatabaseTool_get_subtask_full_context for 2-1-10 earlier.
+      Therefore, I'll use those existing results instead of making a new call.
+      Based on previous results, here's the summary:"
+
 ---
 *Last updated: 2025-12-19 (Orion DB Surface v1.1)*  
 *Aligned with F2-T0-S7_Orion_DB_Surface_Spec_v1.1.md*

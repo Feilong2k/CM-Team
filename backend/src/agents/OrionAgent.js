@@ -213,15 +213,6 @@ class OrionAgent extends BaseAgent {
 
         responseContent = content;
 
-        if (this.db.chatMessages && typeof this.db.chatMessages.addMessage === 'function') {
-          const responseId = `${projectId}-response-${Date.now()}`;
-          await this.db.chatMessages.addMessage(responseId, 'orion', content, {
-            mode,
-            model: this.getModelName(),
-            tokens: 0
-          });
-        }
-
         if (toolCalls && toolCalls.length > 0) {
           toolCallResults = await this.handleToolCalls(toolCalls, context);
 

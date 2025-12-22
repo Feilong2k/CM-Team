@@ -194,7 +194,7 @@ router.post('/messages', async (req, res) => {
         }
         
         // Persist the Orion response to database
-        await query(
+        const savedMessage = await query(
           `INSERT INTO chat_messages (external_id, sender, content, metadata)
            VALUES ($1, $2, $3, $4)
            RETURNING id, external_id, sender, content, metadata, created_at, updated_at`,
@@ -217,6 +217,7 @@ router.post('/messages', async (req, res) => {
         }
         
         return res.status(200).json({
+          id: savedMessage.rows[0].id,
           message: response.content,
           metadata: response.metadata,
         });

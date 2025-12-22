@@ -104,124 +104,120 @@ router.post('/messages', async (req, res) => {
       try {
         await TraceService.logEvent({
           projectId,
-          type: 'user_message',
-          source: 'user',
+          type: "user_message",
+          source: "user",
           timestamp: new Date().toISOString(),
           summary: `User message: ${String(content).slice(0, 80)}`,
-          details: redactDetails({ external_id, content, metadata }),
+          details: redactDetails({
+            external_id,
+            content,
+            metadata,
+            model: orionAgent.getModelName
+              ? orionAgent.getModelName()
+              : "unknown",
+            provider: process.env.ORION_MODEL_PROVIDER || "deepseek",
+          }),
           requestId,
         });
       } catch (err) {
-        console.error('Trace logging failed for user message:', err);
+        console.error("Trace logging failed for user message:", err);
       }
 
       // Check if client wants streaming
-      const acceptHeader = req.get('Accept') || '';
-      const wantsStreaming = acceptHeader.includes('text/event-stream');
-      const mode = (metadata && metadata.mode) || 'plan';
-      
-      if (wantsStreaming) {
-        // Use the real adapter streaming via OrionAgent.processStreaming
-        const adapterStream = orionAgent.processStreaming(external_id, content, { mode });
-        const stream = streamingService.streamFromAdapter(adapterStream);
-        
-        // Define onComplete callback to persist the message
-        const onComplete = async (fullContent) => {
-          try {
-            if (fullContent) {
-              const model = orionAgent.getModelName ? orionAgent.getModelName() : 'unknown';
-              const persisted = await streamingService.persistStreamedMessage(
-                external_id, 
-                fullContent, 
-                { model, mode, streamed: true, ...metadata }
+      const acceptHeader = req.get("Accept") || "";
+      const wantsStreaming = acceptHeader.includes("text/event-stream");
+      const mode = (metadata && metadata.mode) || "plan";
+
+      // Unified Streaming Logic for both PLAN and ACT modes
+      // We ignore "wantsStreaming" check effectively, as the frontend will be updated to always stream.
+      // But for backward compatibility with non-streaming clients (if any), we could keep a branch?
+      // No, requirements say unified pipeline. We will force streaming or at least use the streaming agent method.
+      // However, if the client sends a regular POST and expects JSON, we can't send SSE.
+      // So we keep the check but use the SAME agent logic underneath? No, agent logic is generator.
+      // Let's assume frontend IS updated to use SSE. If a client expects JSON, we'd need to consume the stream
+      // and send JSON at end. But to simplify, let's assume we are serving our own frontend which uses SSE.
+
+      // Use the unified streaming process
+      const adapterStream = orionAgent.processStreaming(external_id, content, {
+        mode,
+        requestId,
+      });
+      const stream = streamingService.streamFromAdapter(adapterStream);
+
+      // Define onComplete callback to persist the message
+      const onComplete = async (fullContent) => {
+        try {
+          if (fullContent) {
+            const model = orionAgent.getModelName
+              ? orionAgent.getModelName()
+              : "unknown";
+            const persisted = await streamingService.persistStreamedMessage(
+              external_id,
+              fullContent,
+              { model, mode, streamed: true, ...metadata }
+            );
+
+            // Log Orion streaming response
+            try {
+              const { computeContentHash } = require("../agents/OrionAgent");
+              const contentHash =
+                typeof computeContentHash === "function"
+                  ? computeContentHash(fullContent)
+                  : fullContent.length; // Fallback simple metric if helper not exported
+
+              await TraceService.logEvent({
+                projectId,
+                type: "orion_response",
+                source: "orion",
+                timestamp: new Date().toISOString(),
+                summary: `Orion streaming response (${mode})`,
+                details: redactDetails({
+                  external_id,
+                  content: fullContent,
+                  metadata: persisted.metadata,
+                  model: orionAgent.getModelName
+                    ? orionAgent.getModelName()
+                    : "unknown",
+                  provider: process.env.ORION_MODEL_PROVIDER || "deepseek",
+                  contentHash,
+                  contentLength: fullContent.length,
+                }),
+                requestId,
+              });
+
+              // Also write a final-response probe file for side-by-side comparison
+              const {
+                logDuplicationProbe,
+              } = require("../services/trace/DuplicationProbeLogger");
+              logDuplicationProbe("final", {
+                projectId,
+                requestId,
+                mode,
+                hash: contentHash,
+                length: fullContent.length,
+                sample: fullContent.slice(0, 300),
+              });
+            } catch (traceErr) {
+              console.error(
+                "Trace logging failed for Orion streaming response:",
+                traceErr
               );
-
-              // Log Orion streaming response
-              try {
-                await TraceService.logEvent({
-                  projectId,
-                  type: 'orion_response',
-                  source: 'orion',
-                  timestamp: new Date().toISOString(),
-                  summary: `Orion streaming response (${mode})`,
-                  details: redactDetails({ external_id, content: fullContent, metadata: persisted.metadata }),
-                  requestId,
-                });
-              } catch (traceErr) {
-                console.error('Trace logging failed for Orion streaming response:', traceErr);
-              }
             }
-          } catch (persistError) {
-            console.error('Failed to persist streamed message:', persistError);
-            // Error already sent via SSE in handleSSE
           }
-        };
-        
-        // Handle SSE response
-        await streamingService.handleSSE(stream, res, onComplete);
-        return;
-      } else {
-        // Non-streaming response
-        // Optional: log LLM call/result around orionAgent.process
-        try {
-          await TraceService.logEvent({
-            projectId,
-            type: 'llm_call',
-            source: 'system',
-            timestamp: new Date().toISOString(),
-            summary: `LLM call (mode=${mode})`,
-            details: { external_id, mode },
-            requestId,
-          });
-        } catch (traceErr) {
-          console.error('Trace logging failed for llm_call:', traceErr);
+        } catch (persistError) {
+          console.error("Failed to persist streamed message:", persistError);
+          // Error already sent via SSE in handleSSE
         }
+      };
 
-        const response = await orionAgent.process(external_id, content, { mode });
+      // Handle SSE response
+      // Note: If the client didn't ask for streaming (Accept: text/event-stream), handleSSE will likely
+      // still try to write SSE headers. We should probably enforce SSE.
+      // If we really need to support non-streaming clients, we would need a utility to consume the stream
+      // and return JSON. For now, we assume the primary client (ChatPanel) will request streaming.
 
-        try {
-          await TraceService.logEvent({
-            projectId,
-            type: 'llm_result',
-            source: 'system',
-            timestamp: new Date().toISOString(),
-            summary: `LLM result (mode=${mode})`,
-            details: { external_id, mode, model: orionAgent.getModelName ? orionAgent.getModelName() : 'unknown' },
-            requestId,
-          });
-        } catch (traceErr) {
-          console.error('Trace logging failed for llm_result:', traceErr);
-        }
-        
-        // Persist the Orion response to database
-        const savedMessage = await query(
-          `INSERT INTO chat_messages (external_id, sender, content, metadata)
-           VALUES ($1, $2, $3, $4)
-           RETURNING id, external_id, sender, content, metadata, created_at, updated_at`,
-          [external_id, 'orion', response.content, { ...response.metadata, mode }]
-        );
-
-        // Log Orion response trace event
-        try {
-          await TraceService.logEvent({
-            projectId,
-            type: 'orion_response',
-            source: 'orion',
-            timestamp: new Date().toISOString(),
-            summary: `Orion response (${mode}): ${String(response.content || '').slice(0, 80)}`,
-            details: redactDetails({ external_id, content: response.content, metadata: response.metadata }),
-            requestId,
-          });
-        } catch (traceErr) {
-          console.error('Trace logging failed for Orion response:', traceErr);
-        }
-        
-        return res.status(200).json({
-          id: savedMessage.rows[0].id,
-          message: response.content,
-          metadata: response.metadata,
-        });
-      }
+      await streamingService.handleSSE(stream, res, onComplete);
+      return;
     } else {
       // For other senders, just store the message
       const result = await query(

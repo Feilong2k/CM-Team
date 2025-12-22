@@ -281,14 +281,15 @@ const handleSendMessage = async (messageText) => {
   })
   
   // Get reference to the reactive message object
-  // Note: We use the object reference directly instead of index, 
-  // because loading older messages (prepending) changes indices.
   const aiMessage = messages.value[messages.value.length - 1]
   
   // Update offset (user + ai)
   currentOffset.value += 2
 
   const endpoint = 'http://localhost:3500/api/chat/messages'
+  
+  // Unified payload for both modes
+  // Double-check: ensure messageText is not duplicated here.
   const payload = {
     external_id: projectId,
     sender: 'user',
@@ -299,59 +300,35 @@ const handleSendMessage = async (messageText) => {
   }
 
   try {
-    if (currentMode.value === 'plan') {
-      // PLAN mode: use streaming SSE (no tools today)
-      await streamOrionReply(endpoint, payload, {
-        onChunk: (chunk) => {
-          if (aiMessage) {
-            aiMessage.content += chunk
-            aiMessage.html = renderMarkdown(aiMessage.content)
-          }
-        },
-        onDone: (fullContent) => {
-          if (aiMessage) {
-            // Ensure content is consistent
-            aiMessage.content = fullContent 
-            aiMessage.html = renderMarkdown(fullContent)
-            aiMessage.isStreaming = false
-          }
-        },
-        onError: (errorMsg) => {
-          if (aiMessage) {
-            aiMessage.isStreaming = false
-            aiMessage.content += `\n\n**Error**: ${errorMsg}`
-            aiMessage.html = renderMarkdown(aiMessage.content)
-          }
-          console.error('Streaming error:', errorMsg)
+    // Unified streaming call for both PLAN and ACT modes
+    await streamOrionReply(endpoint, payload, {
+      onChunk: (chunk) => {
+        if (aiMessage) {
+          aiMessage.content += chunk
+          aiMessage.html = renderMarkdown(aiMessage.content)
         }
-      })
-    } else {
-      // ACT mode: one-shot JSON response so Orion can execute tools via DatabaseTool
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      })
-
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText)
-        throw new Error(`HTTP ${response.status}: ${errorText}`)
-      }
-
-      const data = await response.json()
-      if (aiMessage) {
-        // Update placeholder with real content and ID so deduplication works
-        const content = data.message || ''
-        aiMessage.content = content
-        aiMessage.html = renderMarkdown(content)
-        aiMessage.isStreaming = false
-        if (data.id) {
-          aiMessage.id = data.id
+      },
+      onDone: (fullContent) => {
+        if (aiMessage) {
+          // Ensure content is consistent
+          // Note: fullContent from streamOrionReply is accumulated chunks
+          aiMessage.content = fullContent 
+          aiMessage.html = renderMarkdown(fullContent)
+          aiMessage.isStreaming = false
+          // Note: we don't get the 'id' back from SSE stream directly unless we parse a specific event.
+          // For now, ID deduplication relies on refreshing or knowing that local ID is undefined.
+          // TODO: If we need the ID immediately, we should send it as a custom SSE event.
         }
+      },
+      onError: (errorMsg) => {
+        if (aiMessage) {
+          aiMessage.isStreaming = false
+          aiMessage.content += `\n\n**Error**: ${errorMsg}`
+          aiMessage.html = renderMarkdown(aiMessage.content)
+        }
+        console.error('Streaming error:', errorMsg)
       }
-    }
+    })
   } catch (error) {
     console.error('Error sending message:', error)
     if (aiMessage) {

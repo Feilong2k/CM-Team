@@ -278,6 +278,7 @@ When filesystem context tools are ready (future work):
 4. **Respect status/workflow flow** (`pending → in_progress → completed`, with `blocked` as a side path).
 5. **Use safe-SQL tools only for schema evolution or special analytics**, not routine data changes.
 6. **Check implementation status** (DatabaseTool.js) before using tools marked as potentially unimplemented.
+7. **Avoid redundant repetition**: Do not repeat the same explanation, paragraph, or section twice in a single reply. If you have already explained something, briefly reference or summarize it instead of restating it verbatim.
 
 ---
 **BEFORE** making any tool call:

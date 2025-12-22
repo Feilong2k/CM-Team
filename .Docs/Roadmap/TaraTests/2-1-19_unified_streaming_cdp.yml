@@ -1,0 +1,165 @@
+# CDP Analysis: Subtask 2-1-19 — Unified Streaming & Tool Filtering
+# Analyst: Tara
+# Date: 2025-12-21
+# Status: RED Phase — Failing Tests Required
+
+## 1. Atomic Actions
+
+### A. Mode-Based Tool Filtering
+- **Behavior**: In PLAN mode, only read-only tools are allowed; write tools are blocked. In ACT mode, all tools are allowed.
+- **Observable Outcome**: Tool execution is permitted or blocked based on mode.
+- **Risk Level**: HIGH (security: PLAN mode should not modify state)
+- **Test Seam**: OrionAgent.processStreaming with mode parameter → tool execution decision
+
+### B. Streaming Tool Execution
+- **Behavior**: Tool calls are executed within the streaming loop, and results are injected back into the stream.
+- **Observable Outcome**: Tool results appear in the stream as they happen (formatted with "════ TOOL RESULT ════").
+- **Risk Level**: MEDIUM (streaming integrity, duplication, race conditions)
+- **Test Seam**: StreamingService.processStreaming yields chunks for tool results
+
+### C. Persistence of Streamed Content
+- **Behavior**: The entire streamed turn (including tool results) is persisted once at the end.
+- **Observable Outcome**: DB contains the full aggregated content of the turn.
+- **Risk Level**: MEDIUM (data loss if persistence fails or duplicates)
+- **Test Seam**: StreamingService.persistStreamedMessage called exactly once
+
+### D. Recursive Streaming Loop
+- **Behavior**: After tool execution, the conversation history is updated and the LLM is called again for the next response.
+- **Observable Outcome**: The stream continues with the LLM's next response after tool results.
+- **Risk Level**: MEDIUM (infinite loop if tool results cause repeated tool calls)
+- **Test Seam**: Updated messages array → next adapter call
+
+## 2. Resources Touched
+
+### A. Database (PostgreSQL)
+- **Resource Type**: Relational Database
+- **Access Pattern**: READ (for read tools), WRITE (for write tools, and for persisting chat messages)
+- **Isolation Risks**: Concurrent streaming sessions, race conditions in tool execution
+- **Mitigation**: Transaction isolation, proper locking in tool runner
+
+### B. File System
+- **Resource Type**: File I/O
+- **Access Pattern**: READ (read_file, search_files, list_files), WRITE (write_to_file, replace_in_file)
+- **Isolation Risks**: File permissions, concurrent modifications
+- **Mitigation**: Path traversal protection, read-only mode in PLAN
+
+### C. Memory (Streaming Buffer)
+- **Resource Type**: In-memory processing
+- **Access Pattern**: READ/WRITE (stream chunks, tool results aggregation)
+- **Isolation Risks**: Memory leak from large streams, buffer overflow
+- **Mitigation**: Chunk size limits, proper cleanup
+
+### D. LLM Adapter (DeepSeek, GPT-4)
+- **Resource Type**: External API
+- **Access Pattern**: READ (sending prompts, receiving streaming responses)
+- **Isolation Risks**: Rate limiting, network failures, cost
+- **Mitigation**: Retry logic, timeout handling
+
+## 3. System Physics
+
+### A. Network Latency
+- **Physical Limits**: LLM API response time, tool execution time
+- **Failure Modes**: Timeout, partial stream delivery
+- **Mitigations**: Streaming heartbeat, timeout configuration
+
+### B. Concurrency
+- **Physical Limits**: Multiple users, simultaneous tool calls
+- **Failure Modes**: Deadlock, race conditions
+- **Mitigations**: Queueing, serialization per conversation
+
+### C. Memory Constraints
+- **Physical Limits**: Large tool results (e.g., file contents) in stream
+- **Failure Modes**: OOM, sluggish UI
+- **Mitigations**: Truncation, pagination, streaming of large results
+
+## 4. Anti-Placeholder Analysis
+
+### 🚫 Invalid Test Patterns (Would Pass with Placeholder)
+1. **Tool Filtering**: Test that only checks if a tool was called (not whether it was blocked based on mode)
+2. **Streaming**: Test that only checks if streaming function was called (not the actual chunk content)
+3. **Persistence**: Test that mocks persistStreamedMessage without verifying the aggregated content
+4. **Recursion**: Test that doesn't verify the LLM is called again after tool execution
+
+### ✅ Valid Test Patterns (Fail with Placeholder)
+1. **Tool Filtering**: Test that a write tool is blocked in PLAN mode and allowed in ACT mode
+2. **Streaming**: Test that tool results appear in the stream with the correct formatting
+3. **Persistence**: Test that persistStreamedMessage is called exactly once with the full content
+4. **Recursion**: Test that the LLM receives the tool result in the history and continues the conversation
+
+## 5. Test Seam Validation
+
+### ✅ Clear Seams Exist
+- **Input**: User message + mode → OrionAgent.processStreaming
+- **Processing**: Tool calls filtered by mode, executed, results injected
+- **Output**: Stream chunks, final persistence
+
+### 🚨 Potential Blockers
+- **Tool Classification**: Need a clear way to identify read-only vs write tools (whitelist/blacklist)
+- **Stream Injection**: Mechanism for injecting tool results into the stream must be observable
+- **Persistence Trigger**: Must be able to observe the single call to persistStreamedMessage
+
+## 6. Security Analysis
+
+### A. Unauthorized Write in PLAN Mode
+- **Risk**: Write tools executed in PLAN mode, causing state modification
+- **Mitigation**: Strict whitelist of read-only tools in PLAN mode
+- **Test Required**: YES (verify write tools are blocked)
+
+### B. Tool Argument Validation
+- **Risk**: Malicious tool arguments (e.g., path traversal) even in read tools
+- **Mitigation**: Input validation in each tool
+- **Test Required**: YES (though may be covered by tool unit tests)
+
+### C. Data Leakage
+- **Risk**: Read tools exposing sensitive data in stream
+- **Mitigation**: Access control at tool level
+- **Test Required**: YES (verify only authorized data is returned)
+
+## 7. Test Scenarios (Priority Order)
+
+### CRITICAL (Must Fail with Placeholder)
+1. **C1**: PLAN mode blocks a write tool (e.g., `DatabaseTool_create_subtask`)
+2. **C2**: PLAN mode allows a read tool (e.g., `DatabaseTool_get_subtask_full_context`)
+3. **C3**: ACT mode allows a write tool
+4. **C4**: Tool results appear in the stream with the "════ TOOL RESULT ════" formatting
+5. **C5**: `persistStreamedMessage` is called exactly once at the end of a turn
+
+### HIGH (Essential Behavior)
+6. **H1**: After tool execution, the LLM is called again with updated history (recursive loop)
+7. **H2**: Multiple tool calls in a single turn are handled correctly
+8. **H3**: Stream includes both text chunks and tool result chunks
+9. **H4**: Blocked tool in PLAN mode yields a system message in the stream
+
+### MEDIUM (Edge Cases)
+10. **M1**: Mixed read and write tools in ACT mode all execute
+11. **M2**: Large tool result does not break streaming
+12. **M3**: Network error during tool execution is handled gracefully
+
+### LOW (Non-critical)
+13. **L1**: Performance of streaming with tools (chunk latency)
+14. **L2**: Memory usage of aggregated stream content
+
+## 8. Clarification Requests
+
+### Required
+- **Tool Classification**: How are tools categorized as read-only vs write? Is there a metadata property or a whitelist?
+- **Stream Injection**: What is the exact interface for injecting tool results into the stream? (We need to know the expected format for the test to verify.)
+- **Persistence**: Is there a callback or event we can observe for `persistStreamedMessage`?
+
+## 9. Blocking Status
+
+### ⚠️ PARTIALLY BLOCKED
+- Clarification needed on tool classification and stream injection details.
+- Without these, we cannot write accurate failing tests.
+
+## 10. Next Steps
+
+1. Seek clarification on the above points.
+2. Once unblocked, write failing unit tests for `unified_streaming_tools.spec.js`.
+3. Ensure tests fail with placeholder implementation.
+4. Document test failures for Devon.
+
+---
+**CDP Analyst Signature**: Tara
+**Date**: 2025-12-21
+**Status**: AWAITING CLARIFICATION

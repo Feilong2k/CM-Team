@@ -5,6 +5,18 @@ const { listFiles } = require('../../tools/list_files');
 const functionDefinitions = require('../../tools/functionDefinitions');
 const TraceService = require('../services/trace/TraceService');
 const { TRACE_TYPES, TRACE_SOURCES } = require('../services/trace/TraceEvent');
+const { logDuplicationProbe } = require('../services/trace/DuplicationProbeLogger');
+
+function computeContentHash(content) {
+  let hash = 0;
+  if (!content) return hash;
+  for (let i = 0; i < content.length; i++) {
+    hash = ((hash << 5) - hash) + content.charCodeAt(i);
+    hash |= 0; // Convert to 32-bit integer
+  }
+  // Force unsigned 32-bit for readability
+  return hash >>> 0;
+}
 
 /**
  * OrionAgent - The orchestrator agent that extends BaseAgent.
@@ -146,9 +158,24 @@ class OrionAgent extends BaseAgent {
     const systemPrompt = this.formatSystemPrompt(context, mode);
 
     // Format messages for the adapter
+    // Deduplication check: If the last message in history is identical to the current userMessage,
+    // (which happens because we just saved it to DB), we should NOT append it again.
+    let formattedHistory = this.formatChatHistory(context.chatHistory);
+    const lastMsg = formattedHistory[formattedHistory.length - 1];
+    
+    // If history already contains the user message as the last item, don't append it again
+    if (lastMsg && lastMsg.role === 'user' && lastMsg.content === userMessage) {
+        // We do nothing, the history already covers it.
+        // Actually, for safety, let's just use the history as is, assuming getMessages(20) fetched the latest.
+        // BUT, if getMessages is stale or eventually consistent, it might be missing.
+        // Safer logic: Filter out the last message from history IF it matches, then always append userMessage.
+        // This ensures userMessage is always the last item and we don't duplicate.
+        formattedHistory.pop();
+    }
+
     const messages = [
       { role: 'system', content: systemPrompt },
-      ...this.formatChatHistory(context.chatHistory),
+      ...formattedHistory,
       { role: 'user', content: userMessage }
     ];
 
@@ -346,9 +373,7 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
 
   /**
    * Process a user request with context and tools, returning a stream of the response.
-   * Streaming is currently used only for PLAN mode in the frontend.
-   * Tools are intentionally disabled on the streaming path to keep behavior simple and
-   * avoid half-implemented streaming tool execution.
+   * Now unified for both PLAN and ACT modes.
    *
    * @param {string} projectId - Project ID
    * @param {string} userMessage - User's message
@@ -359,7 +384,25 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
   async *processStreaming(projectId, userMessage, options = {}) {
     const { messages, context, mode } = await this._prepareRequest(projectId, userMessage, options);
 
-    // Log tool registration snapshot for streaming session (still useful for debugging)
+    // Accumulate full content as seen by OrionAgent for duplication probes
+    // NOTE: kept outside try/finally so we can flush probes even if the stream is cancelled early.
+    let fullContentProbe = '';
+
+    const probeProjectId = context.projectId || projectId;
+    const probeRequestId = options.requestId;
+
+    // "Start" probe: proves the agent streaming path is being invoked at all.
+    logDuplicationProbe('agent_start', {
+      projectId: probeProjectId,
+      requestId: probeRequestId,
+      mode,
+      hash: 0,
+      length: 0,
+      sample: 'agent_start',
+    });
+
+    try {
+      // Log tool registration snapshot for streaming session
     try {
       await TraceService.logEvent({
         projectId,
@@ -374,19 +417,225 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
       console.error('Trace logging failed for tool registration (streaming):', err);
     }
 
-    const adapterStream = this.adapter.sendMessagesStreaming(messages, {
-      temperature: mode === 'plan' ? 0.7 : 0.3,
-      max_tokens: 8192,
-      // IMPORTANT: tools disabled on streaming path for now; PLAN mode streams text only.
-      tools: null,
-      context: { projectId, requestId: options.requestId },
-    });
+    let iteration = 0;
+    const maxIterations = 5;
+    let continueLoop = true;
 
-    // For now, just forward adapter events (chunk / error / done). Streaming tool calls are
-    // not yet executed in-stream. ACT mode (non-streaming) remains the path for tools.
-    for await (const event of adapterStream) {
-      yield event;
+    // (moved above into the outer scope so finally{} can always flush probes)
+
+    // Define allowed read-only tools for PLAN mode
+    const PLAN_MODE_WHITELIST = [
+      'read_file', 'list_files', 'search_files', 'list_code_definition_names',
+      'DatabaseTool_get_subtask_full_context',
+      'DatabaseTool_list_subtasks_by_status',
+      'DatabaseTool_search_subtasks'
+    ];
+
+    while (continueLoop && iteration < maxIterations) {
+      iteration++;
+
+      // Filter out any malformed or empty messages before passing to the adapter.
+      const safeMessages = messages
+        .filter(m =>
+          m &&
+          typeof m === 'object' &&
+          typeof m.role === 'string' &&
+          typeof m.content === 'string' &&
+          m.content.trim() !== ''
+        )
+        .map(m => ({ role: m.role, content: m.content }));
+
+      const adapterStream = this.adapter.sendMessagesStreaming(safeMessages, {
+        temperature: mode === 'plan' ? 0.7 : 0.3,
+        max_tokens: 8192,
+        tools: functionDefinitions, // Always provide tool definitions, filtering happens at execution time
+        context: { projectId, requestId: options.requestId },
+      });
+
+      let toolCallsFromStream = [];
+
+      for await (const event of adapterStream) {
+        if (event.chunk) {
+          fullContentProbe += event.chunk;
+        }
+        if (event.toolCalls) {
+          toolCallsFromStream = event.toolCalls;
+        }
+        // Yield everything to the frontend (chunks, done, etc.)
+        yield event;
+      }
+
+      // If we got tool calls, we need to handle them (execute + inject result + loop)
+      if (toolCallsFromStream.length > 0) {
+        // Filter tools based on mode
+        const allowedToolCalls = [];
+        const blockedToolCalls = [];
+
+        for (const call of toolCallsFromStream) {
+          const toolName = call.function.name;
+          // In PLAN mode, check whitelist. In ACT mode, allow all.
+          if (mode === 'plan' && !PLAN_MODE_WHITELIST.some(allowed => toolName.startsWith(allowed) || toolName === allowed)) {
+             blockedToolCalls.push(call);
+          } else {
+             allowedToolCalls.push(call);
+          }
+        }
+
+        // Handle blocked tools (yield a system message to user, do not execute)
+        if (blockedToolCalls.length > 0) {
+          const blockedMsg = `\n\n**System Notice:** The following tool calls were blocked because they are not allowed in PLAN mode: ${blockedToolCalls.map(c => c.function.name).join(', ')}. Switch to ACT mode to execute write operations.`;
+          
+          // Yield as a text chunk so user sees it
+          yield { chunk: blockedMsg };
+          
+          // Add to history so model knows it failed/was blocked
+          messages.push({
+            role: 'system',
+            content: `Refusal: The tool calls [${blockedToolCalls.map(c => c.function.name).join(', ')}] were blocked by system policy because the user is in PLAN mode. You must ask the user to switch to ACT mode if these actions are required.`
+          });
+        }
+
+        // Execute allowed tools
+        if (allowedToolCalls.length > 0) {
+           // We use handleToolCalls (via ToolRunner) which returns results
+           const results = await this.handleToolCalls(allowedToolCalls, context);
+
+           for (const result of results) {
+              const toolLabel = result.toolName || 'tool';
+              const resultJson = JSON.stringify(result.result, null, 2);
+
+              // Surface the tool result back to the model AND the stream
+              const header = '═══════════════════════════════════════════════════════════════════════════════';
+              const titleLine = `TOOL RESULT: ${toolLabel}`;
+              const boxed = [
+                header,
+                titleLine,
+                header,
+                resultJson,
+                header,
+              ].join('\n');
+
+              // 1. Yield to stream so frontend sees it immediately
+              // We prepend a newline to ensure separation.
+              yield { chunk: `\n\n${boxed}\n\n` };
+
+              // 2. Add to history for next iteration
+              messages.push({
+                role: 'system',
+                content: boxed,
+              });
+           }
+        } else {
+           // If all tools were blocked, and we added a refusal message, we still want to continue loop
+           // to let the model apologize/explain.
+        }
+        
+        // If we had tool calls (blocked or allowed), we continue the loop to let the model generate the next response based on the results/refusals.
+        continueLoop = true;
+
+      } else {
+        // No tool calls in this turn, we are done.
+        continueLoop = false;
+      }
     }
+
+    } finally {
+      // Duplication probe: log what OrionAgent saw as full streamed content (by concatenating chunks)
+      // This runs even if the client disconnects / stream is cancelled early.
+      try {
+        const hash = computeContentHash(fullContentProbe);
+
+        try {
+          await TraceService.logEvent({
+            projectId: probeProjectId,
+            type: 'tool_result_stream',
+            source: 'orion',
+            timestamp: new Date().toISOString(),
+            summary: `dup_probe_agent_full_content (mode=${mode})`,
+            details: {
+              hash,
+              length: fullContentProbe.length,
+              sample: fullContentProbe.slice(0, 300),
+            },
+            requestId: probeRequestId,
+          });
+        } catch (traceErr) {
+          console.error('Trace logging failed for dup_probe_agent_full_content:', traceErr);
+        }
+
+        // Always write agent probe to disk
+        logDuplicationProbe('agent', {
+          projectId: probeProjectId,
+          requestId: probeRequestId,
+          mode,
+          hash,
+          length: fullContentProbe.length,
+          sample: fullContentProbe.slice(0, 300),
+        });
+
+        // Also write an explicit "end" marker so we can tell if finalizers ran.
+        logDuplicationProbe('agent_end', {
+          projectId: probeProjectId,
+          requestId: probeRequestId,
+          mode,
+          hash,
+          length: fullContentProbe.length,
+          sample: 'agent_end',
+        });
+      } catch (probeErr) {
+        console.error('Dup probe flush failed:', probeErr);
+      }
+    }
+  }
+
+  /**
+   * Filter tools based on mode.
+   * @private
+   */
+  _filterToolsByMode(mode) {
+    const allTools = this.tools || {};
+    if (mode === 'act') {
+      return allTools;
+    }
+    // PLAN mode: only allow read-only tools
+    const readOnlyPatterns = [
+      /^read_file$/,
+      /^list_files$/,
+      /^search_files$/,
+      /^list_code_definition_names$/,
+      /^DatabaseTool_get_/,
+      /^DatabaseTool_list_/,
+      /^DatabaseTool_search_/,
+    ];
+    const filtered = {};
+    for (const [name, impl] of Object.entries(allTools)) {
+      if (readOnlyPatterns.some(pattern => pattern.test(name))) {
+        filtered[name] = impl;
+      }
+    }
+    return filtered;
+  }
+
+  /**
+   * Filter tool calls into allowed and blocked arrays.
+   * @private
+   */
+  _filterToolCalls(toolCalls, allowedTools) {
+    const allowed = [];
+    const blocked = [];
+    for (const call of toolCalls) {
+      const toolName = call.function?.name;
+      if (!toolName) {
+        blocked.push(call);
+        continue;
+      }
+      if (allowedTools[toolName]) {
+        allowed.push(call);
+      } else {
+        blocked.push(call);
+      }
+    }
+    return { allowed, blocked };
   }
 }
 

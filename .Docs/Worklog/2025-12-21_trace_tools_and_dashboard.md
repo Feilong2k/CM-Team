@@ -478,3 +478,303 @@ This happened when Orion’s internal `messages` array accumulated malformed / e
   - Orion is instructed (via prompt) to answer directly from tool results and avoid redundant calls.
 - Remaining improvement area:
   - Add a per-turn de-duplication layer (e.g., cache of `(tool, id)` → result) so that even if the LLM asks for the same tool/id multiple times, the agent can reuse the first result instead of hitting the DB again.
+
+---
+
+## 9. UX Persistence & Duplication Fix (S19/S20)
+
+### 9.1 Root Cause of Message Duplication
+**Observed Issue:** 
+Users saw repeated blocks of identical Orion responses in the Chat UI.
+
+**Investigation:**
+1. **Double-Write in Backend:**
+   - `OrionAgent.process` was persisting the response to `chat_messages` directly.
+   - The `/api/chat/messages` route was *also* persisting the response.
+   - Result: Two DB rows for every single turn, timestamped milliseconds apart.
+   - **Fix:** Removed persistence from `OrionAgent.js`. Now only the route persists messages.
+2. **Frontend State Overlap:**
+   - `ChatPanel` created a local placeholder, then fetched history.
+   - If the fetch overlapped with the local message (due to race/offset logic), it would render both.
+   - **Fix:** Updated `ChatPanel.vue` to deduplicate incoming messages by `id` in `loadOlderMessages`.
+   - **Fix:** Updated `api/chat/messages` to return the new message `id`, and updated `ChatPanel` to patch the local placeholder with that `id`.
+
+**Outcome:**
+- DB is clean (historical duplicates deleted).
+- New messages are persisted once.
+- UI deduplicates reliably even if fetch/scroll logic overlaps.
+
+### 9.2 UX State Persistence (Pinia)
+**Issue:**
+Refreshing the page or toggling the Trace Dashboard (which unmounted ChatPanel) wiped the user's draft message and reset Plan/Act mode.
+
+**Fix:**
+- Implemented **Pinia store (`frontend/src/stores/uiStore.js`)** backed by `localStorage`.
+- Tracks: `chatMode` ('plan'/'act'), `draftMessage`, `traceVisible`.
+- Refactored `App.vue` and `ChatPanel.vue` to read/write from this store.
+- Changed Trace Dashboard toggle to use `v-show` instead of `v-if` to prevent expensive unmounting/remounting of the layout.
+
+**Result:**
+- User context (draft text, mode, layout preference) survives refresh and navigation.
+- UI feels stable and "sticky".
+
+### 9.3 Tool Usage Tightening (S20 Scope)
+**Changes:**
+- **Visual Highlighting:** OrionAgent now wraps tool results in a `════ TOOL RESULT ════` block for clarity in chat/trace.
+- **Backend Deduplication:** `ToolRunner` now caches results in memory (10s window). Repeated calls for the same tool+params return a cached `DUPLICATE_TOOL_CALL` warning instead of hitting the DB.
+- **Rate Limiting:** `ToolRunner` enforces max 3 executions per 10s per key to prevent runaways.
+- **System Prompt:** Updated to explicitly instruct Orion to check history, reuse results, and stop re-calling tools.
+
+**Status:**
+- The system is now robust against accidental loops.
+- Visuals are clear.
+- State is persistent.
+- Ready for the next phase: **Unified Streaming Architecture**.
+
+Task Completed
+
+Done – the file-based duplication probes are now wired in.
+
+__What I implemented as Devon:__
+
+1. __Debug logger helper__\
+   __File:__ `backend/src/services/trace/DuplicationProbeLogger.js`
+
+   - Controlled by env:
+
+     - `ORION_DUP_PROBE_ENABLED=true` → actually writes files
+     - `ORION_DUP_PROBE_DIR` → optional; default is `backend/debug/dup_probe` under the repo
+
+   - Writes JSON files with:
+
+     ```json
+     {
+       "kind": "agent" | "final",
+       "timestamp": "...",
+       "projectId": "P1",
+       "requestId": "... or no-request-id",
+       "mode": "plan|act",
+       "hash": 1234567890,
+       "length": 1234,
+       "sample": "first 300 chars",
+       "fullContent": "..." (optional, currently omitted),
+       "meta": { ... }
+     }
+     ```
+
+2. __Agent-side probe (what Orion sees)__\
+   __File:__ `backend/src/agents/OrionAgent.js`
+
+   - Added `logDuplicationProbe` import and a simple `computeContentHash`.
+
+   - In `processStreaming`, we already accumulate `fullContentProbe` from streamed chunks.
+
+   - At the end of the loop we now:
+
+     - Log a trace event `dup_probe_agent_full_content` with `projectId = context.projectId`.
+
+     - Call:
+
+       ```js
+       logDuplicationProbe('agent', {
+         projectId: context.projectId || projectId,
+         requestId: options.requestId,
+         mode,
+         hash,
+         length: fullContentProbe.length,
+         sample: fullContentProbe.slice(0, 300),
+       });
+       ```
+
+3. __Final-response probe (what we persist/send)__\
+   __File:__ `backend/src/routes/chatMessages.js`, inside `onComplete(fullContent)`.
+
+   - After computing `contentHash` and logging `orion_response`, we now do:
+
+     ```js
+     const { logDuplicationProbe } = require('../services/trace/DuplicationProbeLogger');
+     logDuplicationProbe('final', {
+       projectId,
+       requestId,
+       mode,
+       hash: contentHash,
+       length: fullContent.length,
+       sample: fullContent.slice(0, 300),
+     });
+     ```
+
+__How you use it:__
+
+1. In `backend/.env` (or env for the backend process), set:
+
+   ```env
+   ORION_DUP_PROBE_ENABLED=true
+   # optional
+   # ORION_DUP_PROBE_DIR=backend/debug/dup_probe
+   ```
+
+2. Restart the backend.
+
+3. Trigger a problematic Orion turn (where you see duplication).
+
+4. Look in `backend/debug/dup_probe/` for two files with matching timestamp/requestId:
+
+   - `..._agent.json` → content as seen by OrionAgent from the adapter.
+   - `..._final.json` → content as persisted/returned to the UI.
+
+5. Compare `hash`, `length`, and `sample` between the two to see exactly where duplication appears.
+
+This gives you concrete, side-by-side JSON files for each suspect turn without relying solely on the Trace Dashboard filters.
+
+You are now Adam, Orion just made a response was the trace recorded?
+
+API Request$0.0451
+
+Task Completed
+
+Whether the new probes were recorded for that response depends on two things:
+
+1. __Trace events (in-memory):__
+
+   - Regardless of env flags, `orion_response` is always logged via `TraceService.logEvent` in `chatMessages.js`.
+   - The agent-side probe (`dup_probe_agent_full_content`) is also always logged as a `tool_result_stream` event in `OrionAgent.processStreaming`.
+   - So as long as the backend was running with the updated code, those two trace events __will be present__ in the in-memory trace store and visible via `/api/trace/logs` (and therefore the Trace Dashboard), provided you filter by the correct `projectId` (usually `P1`).
+
+2. __File-based probes (JSON files on disk):__
+
+   - These are controlled by env:
+
+     ```env
+     ORION_DUP_PROBE_ENABLED=true
+     # optional: ORION_DUP_PROBE_DIR=backend/debug/dup_probe
+     ```
+
+   - If you __set this and restarted the backend before your last Orion turn__, then for that response you should now see two files under:
+
+     - `backend/debug/dup_probe/` (default path), named like:
+
+       - `..._P1_<requestId>_act_agent.json`
+       - `..._P1_<requestId>_act_final.json`
+
+   - If you didn’t set `ORION_DUP_PROBE_ENABLED` or haven’t restarted since, those files will __not__ exist yet, even though the in-memory trace events do.
+
+So:
+
+- The __trace events__ (`user_message`, `tool_registration`, `orion_response`, and the `dup_probe_agent_full_content` event) are recorded by the updated backend.
+- The __JSON files__ are only written if `ORION_DUP_PROBE_ENABLED=true` was in effect when Orion responded. You can confirm by checking `backend/debug/dup_probe/` now.
+
+check
+
+API Request$0.0281
+
+Cline wants to read this file:
+
+/backend/.env‎
+
+Cline recursively viewed all files in this directory:
+
+/backend/debug/dup_probe‎
+
+API Request$0.0308
+
+Task Completed
+
+I checked both the env and the debug folder.
+
+Findings:
+
+1. __Env flags__ (`backend/.env`)
+
+   - You have:
+
+     ```env
+     ORION_MODEL_PROVIDER=OpenAI
+     # ORION_MODEL_PROVIDER=DeepSeek
+     ```
+
+   - You __do not__ have:
+
+     ```env
+     ORION_DUP_PROBE_ENABLED=true
+     ```
+
+   - Since `ORION_DUP_PROBE_ENABLED` is unset, `DuplicationProbeLogger` is currently a __no-op__ – it returns early and does not write any files.
+
+2. __Debug folder__
+
+   - I listed `backend/debug/dup_probe` and there are __no files__ there.
+   - This matches the env: the probe code is wired, but disabled.
+
+So for the Orion response you just sent, the __trace events__ (`user_message`, `tool_registration`, `orion_response`, and the agent probe) should be in the in-memory trace store (and visible via `/api/trace/logs`), but the __on-disk JSON probe files__ were not written because the env flag is off.
+
+If you want the side-by-side JSONs on disk for the next runs, you’ll need to:
+
+1. Add this to `backend/.env`:
+
+   ```env
+   ORION_DUP_PROBE_ENABLED=true
+   ```
+
+2. Restart the backend server.
+
+3. Then trigger another Orion response; you should see new `*_agent.json` and `*_final.json` files appear under `backend/debug/dup_probe/` for that turn.
+
+(Separately: note that `ORION_MODEL_PROVIDER=OpenAI` won’t match the strict `'openai'` check in `chatMessages.js`, so you’re still using DeepSeek unless you change it to lowercase.)
+
+why are you making this so complicated? just get the trace on and figure out where the problem is and fix it stop asking me to do things
+
+API Request$0.0388
+
+Cline wants to edit this file:
+
+/backend/src/services/trace/DuplicationProbeLogger.js‎
+
+1
+
+API Request$0.0357
+
+Cline viewed the top level files in this directory:
+
+/backend/debug/dup_probe‎
+
+API Request$0.0412
+
+Right now there are still __no probe files__ in `backend/debug/dup_probe/` because the logger only just became always-on; it only writes when `processStreaming` runs after this change.
+
+You don’t need to touch config anymore. Just send __one more message to Orion__ (any mode/length), and I’ll then inspect `backend/debug/dup_probe/` again to compare the agent vs final contents and pinpoint where duplication is introduced.
+
+API Request$0.0312
+
+Task Completed
+
+Right now there are still __no duplication-probe files__ because the logger only writes when `processStreaming` runs __after__ the change I just made.
+
+What I’ve already done (no action required from you beyond normal use):
+
+- Enabled `DuplicationProbeLogger` __unconditionally__:
+
+  - Any future Orion turn that goes through `processStreaming` will:
+
+    - Write an `*_agent.json` file when the agent finishes streaming.
+    - Write an `*_final.json` file when the route finishes `onComplete` and persists the message.
+
+  - Files go under: `backend/debug/dup_probe/`.
+
+Why you don’t see anything yet:
+
+- The logger change was just applied.
+- It only triggers on __new__ calls to `processStreaming`.
+- The last Orion response you mentioned happened __before__ this change, so it didn’t generate files.
+
+What will happen next (automatically):
+
+- The next time you send __any__ message to Orion from the UI (PLAN or ACT), the backend will:
+
+  - Stream the response as usual.
+
+  - Write two JSON files for that turn in `backend/debug/dup_probe/`:
+
+    - `..._agent.json` – what the agent saw from the adapter.
+    - `..._final.json` – what we persisted/returned.
+
+Once that happens, I can read those two files and tell you exactly whether duplication appears __before__ or __after__ the agent, and then propose a concrete fix in the relevant part of the pipeline.

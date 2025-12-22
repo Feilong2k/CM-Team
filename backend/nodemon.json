@@ -1,0 +1,11 @@
+{
+  "watch": ["src"],
+  "ext": "js,json",
+  "ignore": [
+    "debug/**",
+    "backend/debug/**",
+    "**/dup_probe/**",
+    "src/_test_/**",
+    "**/*.spec.js"
+  ]
+}

@@ -17,28 +17,34 @@ class DS_ChatAdapter extends LLMAdapter {
    */
   constructor(config = {}) {
     super();
-    
+
     if (!config || typeof config !== 'object') {
       throw new Error('Configuration object is required');
     }
-    
-    const { apiKey, model = 'deepseek-chat', baseURL = 'https://api.deepseek.com', timeout = 30000, maxRetries = 3 } = config;
-    
+
+    const {
+      apiKey,
+      model = 'deepseek-chat',
+      baseURL = 'https://api.deepseek.com',
+      timeout = 30000,
+      maxRetries = 3,
+    } = config;
+
     if (!apiKey || typeof apiKey !== 'string' || apiKey.trim() === '') {
       throw new Error('apiKey is required and must be a non-empty string');
     }
-    
+
     this.apiKey = apiKey.trim();
     this.model = model;
     this.baseURL = baseURL.replace(/\/$/, ''); // Remove trailing slash if present
     this.timeout = timeout;
     this.maxRetries = maxRetries;
-    
+
     // Validate timeout
     if (typeof this.timeout !== 'number' || this.timeout <= 0) {
       throw new Error('timeout must be a positive number');
     }
-    
+
     // Validate maxRetries
     if (typeof this.maxRetries !== 'number' || this.maxRetries < 0) {
       throw new Error('maxRetries must be a non-negative number');
@@ -54,29 +60,29 @@ class DS_ChatAdapter extends LLMAdapter {
    */
   async sendMessages(messages, options = {}) {
     const { stream = false, tools = null, max_tokens, temperature } = options;
-    
+
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new Error('messages must be a non-empty array');
     }
-    
+
     // Validate each message
     for (const msg of messages) {
       if (!msg || typeof msg !== 'object' || !msg.role || !msg.content) {
         throw new Error('Each message must be an object with role and content');
       }
     }
-    
+
     const url = `${this.baseURL}/chat/completions`;
     const headers = {
-      'Authorization': `Bearer ${this.apiKey}`,
+      Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
     };
-    
+
     const body = {
       model: this.model,
-      messages: messages.map(msg => ({
+      messages: messages.map((msg) => ({
         role: msg.role,
-        content: msg.content
+        content: msg.content,
       })),
       stream,
     };
@@ -90,23 +96,23 @@ class DS_ChatAdapter extends LLMAdapter {
       body.tools = tools;
       body.tool_choice = 'auto';
     }
-    
+
     let lastError;
-    
+
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-        
+
         const response = await fetch(url, {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
           signal: controller.signal,
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         if (!response.ok) {
           let errorMessage = `API error: ${response.status} ${response.statusText}`;
           try {
@@ -117,27 +123,27 @@ class DS_ChatAdapter extends LLMAdapter {
           }
           throw new Error(errorMessage);
         }
-        
+
         const data = await response.json();
         return this.parseResponse(data);
-        
+
       } catch (error) {
         console.error(`Attempt ${attempt} failed:`, error.message);
         if (error.response) {
-            console.error('Error details:', await error.response.text());
+          console.error('Error details:', await error.response.text());
         }
         lastError = error;
-        
+
         // Don't retry on abort (timeout) or certain client errors
         if (error.name === 'AbortError' || (error.message && error.message.includes('timeout'))) {
           throw new Error(`Request timeout after ${this.timeout}ms`);
         }
-        
+
         // Don't retry on 4xx errors (client errors)
         if (error.message && error.message.includes('API error: 4')) {
           throw error;
         }
-        
+
         // If this was the last attempt, throw the error
         if (attempt === this.maxRetries) {
           if (lastError.message && lastError.message.includes('Network error')) {
@@ -145,13 +151,13 @@ class DS_ChatAdapter extends LLMAdapter {
           }
           throw lastError;
         }
-        
+
         // Wait before retrying (exponential backoff)
         const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
-    
+
     // This should never be reached, but just in case
     throw lastError || new Error('Failed to send messages');
   }
@@ -163,30 +169,30 @@ class DS_ChatAdapter extends LLMAdapter {
    * @returns {AsyncGenerator<Object>} Stream of chunks with chunk content or tool calls
    */
   async *sendMessagesStreaming(messages, options = {}) {
-    const { tools = null, max_tokens, temperature, context } = options;
-    
+    const { tools = null, max_tokens, temperature } = options;
+
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new Error('messages must be a non-empty array');
     }
-    
+
     // Validate each message
     for (const msg of messages) {
       if (!msg || typeof msg !== 'object' || !msg.role || !msg.content) {
         throw new Error('Each message must be an object with role and content');
       }
     }
-    
+
     const url = `${this.baseURL}/chat/completions`;
     const headers = {
-      'Authorization': `Bearer ${this.apiKey}`,
+      Authorization: `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
     };
-    
+
     const body = {
       model: this.model,
-      messages: messages.map(msg => ({
+      messages: messages.map((msg) => ({
         role: msg.role,
-        content: msg.content
+        content: msg.content,
       })),
       stream: true,
     };
@@ -198,24 +204,27 @@ class DS_ChatAdapter extends LLMAdapter {
       body.tools = tools;
       body.tool_choice = 'auto';
     }
-    
+
     let lastError;
     let hasYielded = false;
-    
+
+    // Guard state (prevents common provider-side duplicate delta emission)
+    let lastContentDelta = null;
+
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-        
+
         const response = await fetch(url, {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
           signal: controller.signal,
         });
-        
+
         clearTimeout(timeoutId);
-        
+
         if (!response.ok) {
           let errorMessage = `API error: ${response.status} ${response.statusText}`;
           try {
@@ -226,89 +235,96 @@ class DS_ChatAdapter extends LLMAdapter {
           }
           throw new Error(errorMessage);
         }
-        
+
         // Parse Server-Sent Events stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
         let fullContent = '';
-        
+
         try {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
+
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
             buffer = lines.pop() || '';
-            
+
             for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const dataStr = line.slice(6);
-                if (dataStr === '[DONE]') {
-                  // Stream finished
-                  hasYielded = true;
-                  yield { done: true, fullContent };
-                  return;
+              if (!line.startsWith('data: ')) continue;
+
+              const dataStr = line.slice(6);
+              if (dataStr === '[DONE]') {
+                // Stream finished
+                hasYielded = true;
+                yield { done: true, fullContent };
+                return;
+              }
+
+              try {
+                const data = JSON.parse(dataStr);
+                if (!data.choices || !data.choices[0] || !data.choices[0].delta) {
+                  continue;
                 }
-                
-                try {
-                  const data = JSON.parse(dataStr);
-                  if (data.choices && data.choices[0] && data.choices[0].delta) {
-                    const delta = data.choices[0].delta;
-                    const hasToolCall = Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
 
-                    // If the model is emitting tool_calls in the stream, surface them
-                    if (hasToolCall) {
-                      // We do not mark hasYielded here because no user-visible content was sent yet.
-                      yield { toolCalls: delta.tool_calls };
-                    }
+                const delta = data.choices[0].delta;
+                const hasToolCall = Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
 
-                    if (delta.content) {
-                      // Mark as yielded BEFORE yielding, so if yield throws (consumer aborted),
-                      // we know not to retry.
-                      hasYielded = true;
-                      yield { chunk: delta.content };
-                      fullContent += delta.content;
-                    }
+                // If the model is emitting tool_calls in the stream, surface them
+                if (hasToolCall) {
+                  yield { toolCalls: delta.tool_calls };
+                }
+
+                if (typeof delta.content === 'string' && delta.content.length > 0) {
+                  // Guard #1: drop exact consecutive duplicate deltas
+                  if (lastContentDelta !== null && delta.content === lastContentDelta) {
+                    continue;
                   }
-                } catch (e) {
-                  console.error('Failed to parse SSE data:', e);
+                  lastContentDelta = delta.content;
+
+                  // Mark as yielded BEFORE yielding, so if yield throws (consumer aborted),
+                  // we know not to retry.
+                  hasYielded = true;
+                  yield { chunk: delta.content };
+                  fullContent += delta.content;
                 }
+              } catch (e) {
+                console.error('Failed to parse SSE data:', e);
               }
             }
           }
         } finally {
           reader.releaseLock();
         }
-        
+
         // If we reach here without [DONE], yield final event
         if (fullContent) {
           hasYielded = true;
           yield { done: true, fullContent };
         }
         return;
-        
+
       } catch (error) {
         console.error(`Attempt ${attempt} failed:`, error.message);
         lastError = error;
-        
+
         // If we have already yielded content, we cannot transparently retry
         // because the consumer has already received partial data.
         if (hasYielded) {
           throw error;
         }
-        
+
         // Don't retry on abort (timeout) or certain client errors
         if (error.name === 'AbortError' || (error.message && error.message.includes('timeout'))) {
           throw new Error(`Request timeout after ${this.timeout}ms`);
         }
-        
+
         // Don't retry on 4xx errors (client errors)
         if (error.message && error.message.includes('API error: 4')) {
           throw error;
         }
-        
+
         // If this was the last attempt, throw the error
         if (attempt === this.maxRetries) {
           if (lastError.message && lastError.message.includes('Network error')) {
@@ -316,13 +332,13 @@ class DS_ChatAdapter extends LLMAdapter {
           }
           throw lastError;
         }
-        
+
         // Wait before retrying (exponential backoff)
         const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
-    
+
     // This should never be reached, but just in case
     throw lastError || new Error('Failed to send messages');
   }
@@ -336,20 +352,20 @@ class DS_ChatAdapter extends LLMAdapter {
     if (!apiResponse || typeof apiResponse !== 'object') {
       throw new Error('Invalid API response: response must be an object');
     }
-    
+
     if (!apiResponse.choices || !Array.isArray(apiResponse.choices) || apiResponse.choices.length === 0) {
       throw new Error('Invalid API response: missing or empty choices array');
     }
-    
+
     const firstChoice = apiResponse.choices[0];
     if (!firstChoice.message || typeof firstChoice.message !== 'object') {
       throw new Error('Invalid API response: choice missing message object');
     }
-    
+
     const message = firstChoice.message;
     const content = typeof message.content === 'string' ? message.content : '';
     const toolCalls = message.tool_calls || [];
-    
+
     return { content, toolCalls };
   }
 
@@ -358,7 +374,7 @@ class DS_ChatAdapter extends LLMAdapter {
    * @param {Array} toolCalls - Array of tool calls from the LLM
    * @returns {Promise<Array>} Results of tool executions
    */
-  async handleToolCalls(toolCalls) {
+  async handleToolCalls() {
     // DS_ChatAdapter does not execute tools itself.
     // Tool execution is handled by the Agent layer.
     return [];
@@ -373,12 +389,12 @@ class DS_ChatAdapter extends LLMAdapter {
     if (!apiResponse || typeof apiResponse !== 'object') {
       return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     }
-    
+
     const usage = apiResponse.usage;
     if (!usage || typeof usage !== 'object') {
       return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     }
-    
+
     return {
       promptTokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : 0,
       completionTokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0,

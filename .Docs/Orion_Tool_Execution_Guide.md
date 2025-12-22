@@ -539,3 +539,12 @@ These are the concrete follow‑ups well tackle in future subtasks (e.g. 2‑1�
     - (Later) verify that streaming tool calls emit the expected trace events.
 
 These TODOs are intentionally incremental: we already have the core ToolRunner + trace infrastructure in place; the next work is mostly about **wiring streaming paths into that same pipeline** and surfacing richer debugging information via `/api/trace/logs` and a small dashboard.
+
+- __Ladder‑style trace visualization__
+  - We have a basic timeline + detail view, not the full requestId‑grouped “ladder” view Orion sketched.
+
+- __Frontend support for streamed tool results__
+  - `streamOrionReply` / ChatPanel don’t recognize or render `{ type: 'tool_result' }` SSE events (because we don’t emit them yet).
+
+- __Extra trace API tests__
+  - `api_trace.spec.js`

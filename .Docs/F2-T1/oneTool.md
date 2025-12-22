@@ -432,3 +432,48 @@ For this single tool, Tara should be able to write tests that assert:
 ---
 
 If you’d like, I can next outline a similar spec for the first FS tool (`FileSystemTool_read_file`) so you have a symmetric “golden path” on both DB and filesystem before expanding to more tools.
+
+That’s great to hear—nice milestone.
+
+Quick recap of what we put in place:
+
+1. __Thin DB adapter for tool-calling__
+
+   - Implemented `backend/tools/DatabaseToolAgentAdapter.js` with `get_subtask_full_context(args)` that:
+
+     - Accepts a single args object `{ subtask_id, project_id?, context? }`.
+     - Derives `projectId` from `project_id` or `context.projectId`.
+     - Delegates to `DatabaseTool.get_subtask_full_context(subtaskId, projectId)`.
+     - Propagates DB errors (e.g., `MISSING_PROJECT_CONTEXT`) unchanged.
+
+   - Backed by a RED → GREEN test: `backend/src/_test_/database_tool_agent_adapter.spec.js`.
+
+2. __Registry & Orion wiring__
+
+   - Updated `backend/tools/registry.js` so that for Orion:
+
+     - `DatabaseTool` → `DatabaseToolAgentAdapter` (used for LLM tool_calls).
+     - `DatabaseToolInternal` → raw `DatabaseTool` instance (used by OrionAgent for `chatMessages` and other internal DB ops).
+
+   - Updated `backend/src/agents/OrionAgent.js` to prefer `tools.DatabaseToolInternal` when present, preserving existing chat message logging while letting tool_calls go through the adapter.
+
+3. __Prompt / docs alignment__
+
+   - `.Docs/Prompts/Orion_Database_Tools.md`:
+     - Added an “Implementation note (F2‑T1)” documenting that DB tools are executed via `DatabaseToolAgentAdapter`, which maps JSON args → positional `DatabaseTool` calls.
+
+   - `.Docs/Prompts/FileSystemTool_Integration_Gap.md`:
+     - Marked as historical (pre‑F2‑T1) and clarified that core FS tools are now implemented and registered.
+
+   - `.Docs/Prompts/SystemPrompt_Orion.md`:
+
+     - Reframed the tools section so Orion sees __one primary DB tool__ for MVP:
+       - `DatabaseTool_get_subtask_full_context(subtask_id, project_id?)` as the main, adapter-backed entry point.
+     - Labeled the broader DB surface as “Legacy / Planned Tools” to reduce confusion while you progressively enable more adapters.
+
+Result: DeepSeek tool-calls for `DatabaseTool_get_subtask_full_context` now flow cleanly through Orion → BaseAgent → adapter → DatabaseTool → DB, and Orion can reliably read subtask context.
+
+If/when you’re ready for the next step, the natural follow-ons are:
+
+- Add adapter methods + tests for the next most useful DB tools (e.g., `list_subtasks_for_task`, `get_feature_overview`).
+- Mirror this pattern for one FS tool (`FileSystemTool_read_file`) so DeepSeek can safely pull code context as well.

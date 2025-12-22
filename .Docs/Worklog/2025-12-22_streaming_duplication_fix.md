@@ -152,3 +152,28 @@ The duplication probe instrumentation ended up confusing the trace timeline (e.g
 - Re-ran a focused test subset and re-checked the dev DB count; it remained unchanged.
 
 **Commit:** `96f4559` (Protect dev DB from tests (use DATABASE_URL_TEST))
+
+---
+
+### 4) Tool-call reliability fixes: stop retry spam + surface tool errors to Orion
+**Symptom:** When requesting a non-existent subtask (e.g., `2-1-199`), Orion would:
+- trigger repeated tool calls
+- show empty TOOL RESULT boxes (no error text)
+- user could still see the real error in the trace (`Subtask with ID ... not found`)
+
+**Root cause:**
+- `ToolRunner.executeToolCalls()` has an internal retry policy (`maxAttempts=3`). Each attempt was logged as a new `tool_call`/`tool_result` pair by `DatabaseToolAgentAdapter`, creating the impression of “more than 3 calls”.
+- OrionAgent boxed tool results as `JSON.stringify(result.result)`; on failures ToolRunner returns `{ success:false, error: ... }`, so `result.result` was undefined → empty box.
+
+**Fixes:**
+- `backend/src/agents/OrionAgent.js`
+  - When ToolRunner returns `success:false`, stream a TOOL RESULT payload containing `{ ok:false, error, details, attempts, toolCallId }` so Orion can react and stop retrying.
+- `backend/tools/ToolRunner.js`
+  - Added `isDeterministicNonRetryable()` guard so deterministic errors do **not** retry (e.g., `/not found/i`, `MISSING_PROJECT_CONTEXT`).
+- Added regression test:
+  - `backend/src/_test_/toolrunner_nonretryable_errors.spec.js`
+
+**Verification:**
+- `npm test --prefix backend -- src/_test_/toolrunner_nonretryable_errors.spec.js src/_test_/orion_streaming_partial_toolcalls.spec.js src/_test_/unified_streaming_tools.spec.js`
+
+**Commit:** `0d0fb6c` (Tool errors: show in chat; avoid retry spam for not-found)

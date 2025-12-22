@@ -97,7 +97,7 @@ describe('P1-F2-T1-S5 (A2) - Frontend streaming client integration', () => {
     // Assert that fetch was called with the correct arguments
     expect(mockFetch).toHaveBeenCalledTimes(2) // First GET, then POST
     const postCall = mockFetch.mock.calls[1]
-    expect(postCall[0]).toBe('http://localhost:3500/api/chat/messages')
+    expect(postCall[0]).toBe('/api/chat/messages')
     expect(postCall[1].method).toBe('POST')
     expect(postCall[1].headers['Accept']).toContain('text/event-stream')
     expect(postCall[1].body).toContain(messageText)

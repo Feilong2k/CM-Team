@@ -137,7 +137,7 @@ watch(messages, () => {
 const loadInitialMessages = async () => {
   loadingInitial.value = true
   try {
-    const response = await fetch(`http://localhost:3500/api/chat/messages?project_id=${projectId}&limit=${limit}&offset=0`)
+    const response = await fetch(`/api/chat/messages?project_id=${projectId}&limit=${limit}&offset=0`)
     if (!response.ok) {
       throw new Error(`API error: ${response.status}`)
     }
@@ -175,7 +175,7 @@ const loadOlderMessages = async () => {
   shouldAutoScroll.value = false
   
   try {
-    const response = await fetch(`http://localhost:3500/api/chat/messages?project_id=${projectId}&limit=${limit}&offset=${currentOffset.value}`)
+    const response = await fetch(`/api/chat/messages?project_id=${projectId}&limit=${limit}&offset=${currentOffset.value}`)
     if (!response.ok) {
       throw new Error(`API error: ${response.status}`)
     }
@@ -286,7 +286,8 @@ const handleSendMessage = async (messageText) => {
   // Update offset (user + ai)
   currentOffset.value += 2
 
-  const endpoint = 'http://localhost:3500/api/chat/messages'
+  // Use Vite dev-server proxy (`frontend/vite.config.js`) so we don't depend on CORS.
+  const endpoint = '/api/chat/messages'
   
   // Unified payload for both modes
   // Double-check: ensure messageText is not duplicated here.

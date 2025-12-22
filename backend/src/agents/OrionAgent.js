@@ -16,6 +16,77 @@ function safeToolName(call) {
   return fn.name;
 }
 
+function mergeArgumentStrings(existing, incoming) {
+  if (typeof incoming !== 'string' || incoming.length === 0) return existing;
+  if (typeof existing !== 'string' || existing.length === 0) return incoming;
+
+  // If one is a strict prefix of the other, keep the longer (more complete) version.
+  if (incoming.startsWith(existing)) return incoming;
+  if (existing.startsWith(incoming)) return existing;
+
+  // If the incoming fragment is already at the end, do nothing.
+  if (existing.endsWith(incoming)) return existing;
+
+  // Otherwise, append (streaming tool arguments often arrive as fragments).
+  return existing + incoming;
+}
+
+function mergeToolCall(existing, patch) {
+  if (!existing) return patch;
+  if (!patch || typeof patch !== 'object') return existing;
+
+  const merged = { ...existing, ...patch };
+
+  const existingFn = existing.function && typeof existing.function === 'object' ? existing.function : {};
+  const patchFn = patch.function && typeof patch.function === 'object' ? patch.function : {};
+
+  merged.function = {
+    ...existingFn,
+    ...patchFn,
+    name: patchFn.name || existingFn.name,
+    arguments: mergeArgumentStrings(existingFn.arguments, patchFn.arguments),
+  };
+
+  return merged;
+}
+
+function mergeToolCallsIntoMap(toolCallMap, toolCalls) {
+  if (!toolCallMap || !Array.isArray(toolCalls)) return;
+
+  // OpenAI-style streaming can send:
+  // - a first delta that includes both { id, index }
+  // - later deltas that include only { index } (no id)
+  // We keep a mapping of index -> id in the map itself via a special entry.
+  const indexToIdKey = '__index_to_id__';
+  const indexToId = toolCallMap.get(indexToIdKey) || new Map();
+
+  for (const call of toolCalls) {
+    if (!call || typeof call !== 'object') continue;
+
+    // Establish index->id mapping if both exist
+    if (typeof call.index === 'number' && typeof call.id === 'string' && call.id.trim() !== '') {
+      indexToId.set(call.index, call.id);
+    }
+
+    // Resolve key: prefer explicit id, else use mapped id, else fall back to index.
+    let key = null;
+    if (typeof call.id === 'string' && call.id.trim() !== '') {
+      key = call.id;
+    } else if (typeof call.index === 'number' && indexToId.has(call.index)) {
+      key = indexToId.get(call.index);
+    } else if (typeof call.index === 'number') {
+      key = String(call.index);
+    }
+
+    if (!key) continue;
+
+    const existing = toolCallMap.get(key);
+    toolCallMap.set(key, mergeToolCall(existing, call));
+  }
+
+  toolCallMap.set(indexToIdKey, indexToId);
+}
+
 /**
  * OrionAgent - The orchestrator agent that extends BaseAgent.
  * Handles context building, logging, and conversation management.
@@ -380,12 +451,32 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
         context: { projectId, requestId: options.requestId },
       });
 
+      // Streaming tool_calls are often emitted as partial deltas.
+      // Accumulate them across the stream and merge by call.id (or index) so we end
+      // up with a fully-formed { function: { name, arguments } } before executing.
+      const toolCallMap = new Map();
       let toolCallsFromStream = [];
+
+      // IMPORTANT: Do not forward adapter `done` to the client yet.
+      // If we yield `done` before executing tools, StreamingService will stop
+      // forwarding later TOOL RESULT chunks, making it appear that tools never ran.
+      let pendingDoneEvent = null;
 
       for await (const event of adapterStream) {
         if (event.toolCalls) {
-          toolCallsFromStream = event.toolCalls;
+          mergeToolCallsIntoMap(toolCallMap, event.toolCalls);
+          toolCallsFromStream = Array.from(toolCallMap.values());
+          // Forward toolCalls for UI visibility/debugging.
+          yield event;
+          continue;
         }
+
+        if (event.done) {
+          // Save for later; we'll emit a single done at the end of the loop.
+          pendingDoneEvent = event;
+          continue;
+        }
+
         yield event;
       }
 
@@ -444,6 +535,12 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
         continueLoop = true;
       } else {
         continueLoop = false;
+      }
+
+      // Emit the saved done event only after tool handling (and any follow-up turn).
+      // If the adapter never sent a done, don't invent one here.
+      if (!continueLoop && pendingDoneEvent) {
+        yield pendingDoneEvent;
       }
     }
   }

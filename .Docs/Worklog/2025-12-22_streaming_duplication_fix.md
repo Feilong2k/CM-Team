@@ -84,3 +84,71 @@ Next task:
 
 ## Key takeaway
 The duplication bug was fixed by normalizing a flaky provider stream at the adapter boundary (DeepSeek), not by rewriting the whole frontend/backend pipeline.
+
+---
+
+## Follow-up work completed (same day)
+
+### 1) Removed dup_probe instrumentation entirely (to eliminate noisy/ambiguous trace events)
+The duplication probe instrumentation ended up confusing the trace timeline (e.g. events like `dup_probe_agent_full_content` and a misnamed `tool_result_stream` type showing up even when no tool execution occurred).
+
+**Goal:** remove *all* dup_probe artifacts so the trace dashboard reflects real events only.
+
+**Changes:**
+- Deleted debug-only logger:
+  - `backend/src/services/trace/DuplicationProbeLogger.js`
+- Removed probe logging call-sites:
+  - `backend/src/agents/OrionAgent.js`
+  - `backend/src/routes/chatMessages.js`
+- Removed/cleaned probe-related configuration:
+  - `backend/src/services/trace/TraceConfig.js`
+- Removed probe tests:
+  - `backend/src/_test_/dup_probe_agent_emission.spec.js`
+  - `backend/src/_test_/dup_probe_long_path.spec.js`
+  - Removed the probe assertion block from `backend/src/_test_/unified_streaming_tools.spec.js`
+
+**Verification:**
+- Targeted backend tests passed:
+  - `npm test --prefix backend -- src/_test_/unified_streaming_tools.spec.js`
+
+**Commit:** `bf21f3d` (Remove dup_probe instrumentation)
+
+---
+
+### 2) Fixed “Chat UI only shows latest message” (history not loading)
+**Symptom:** The ChatPanel UI would show only the most recent message (the one locally appended after sending), but not historical messages.
+
+**Root cause:** Frontend used hard-coded absolute backend URLs (`http://localhost:3500/...`). When running the UI on the Vite dev server (`http://localhost:6100`), history fetches could be blocked by backend CORS (which only allows `localhost:6100-6120`), and/or bypassed the Vite proxy.
+
+**Fix:** Use same-origin `/api/...` calls so the Vite dev-server proxy (`frontend/vite.config.js`) routes traffic to the backend without relying on CORS.
+
+**Changes:**
+- `frontend/src/components/ChatPanel.vue`
+  - History loading uses: `fetch('/api/chat/messages?...')`
+  - Streaming uses: `POST '/api/chat/messages'`
+- Updated expectation in `frontend/src/__tests__/ChatPanel.streaming.spec.js` to match `'/api/chat/messages'`
+
+**Commit:** `fe858b9` (Fix chat history loading via Vite /api proxy)
+
+---
+
+### 3) Root cause analysis: chat_messages were being deleted by backend tests
+**Observation:** `chat_messages` count in the dev DB was unexpectedly low.
+
+**Findings:**
+- Dev DB (`DATABASE_URL`) had **8** `chat_messages` rows.
+- Test DB (`DATABASE_URL_TEST`) had **63** rows.
+- `backend/src/_test_/chat_messages_migration.spec.js` includes `DELETE FROM chat_messages` cleanup, but it was connecting via `process.env.DATABASE_URL` (dev DB), meaning running `npm test --prefix backend` could wipe the dev conversation history.
+
+**Fixes:**
+- Updated tests that created direct `pg.Client` connections to select `DATABASE_URL_TEST` when `NODE_ENV=test`:
+  - `backend/src/_test_/chat_messages_migration.spec.js`
+  - `backend/src/_test_/schema_v2.spec.js`
+- Added a hard safety guard in `backend/src/db/connection.js`:
+  - If `NODE_ENV=test` and `DATABASE_URL_TEST` is missing, throw immediately.
+  - Prevents test runs from accidentally using the dev DB through the shared connection module.
+
+**Verification:**
+- Re-ran a focused test subset and re-checked the dev DB count; it remained unchanged.
+
+**Commit:** `96f4559` (Protect dev DB from tests (use DATABASE_URL_TEST))

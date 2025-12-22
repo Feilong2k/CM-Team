@@ -17,8 +17,25 @@
 const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
-// Load environment variables explicitly from backend/.env for test environment consistency
+
+// Load environment variables explicitly from backend/.env for test environment consistency.
+// NOTE: When running under Jest (`NODE_ENV=test`), we must target DATABASE_URL_TEST
+// to avoid mutating the dev database.
 require('dotenv').config({ path: path.resolve(__dirname, '../../../backend/.env') });
+
+function getTestSafeDatabaseUrl() {
+  if (process.env.NODE_ENV === 'test') {
+    if (!process.env.DATABASE_URL_TEST) {
+      throw new Error('Missing DATABASE_URL_TEST (required for NODE_ENV=test)');
+    }
+    return process.env.DATABASE_URL_TEST;
+  }
+
+  if (!process.env.DATABASE_URL) {
+    throw new Error('Missing DATABASE_URL');
+  }
+  return process.env.DATABASE_URL;
+}
 
 describe('Chat Messages Schema - Subtask F2-T0-S1', () => {
   let client;
@@ -27,7 +44,8 @@ describe('Chat Messages Schema - Subtask F2-T0-S1', () => {
   // Remove duplicate declaration of 'path' variable
 
   beforeAll(async () => {
-    client = new Client({ connectionString: process.env.DATABASE_URL });
+    const connectionString = getTestSafeDatabaseUrl();
+    client = new Client({ connectionString });
     await client.connect();
   });
 

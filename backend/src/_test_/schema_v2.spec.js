@@ -13,15 +13,30 @@ const { Client } = require('pg');
 const fs = require('fs');
 const path = require('path');
 
-// Load environment variables
+// Load environment variables.
+// IMPORTANT: tests must target DATABASE_URL_TEST when NODE_ENV=test.
 require('dotenv').config();
+
+function getTestSafeDatabaseUrl() {
+  if (process.env.NODE_ENV === 'test') {
+    if (!process.env.DATABASE_URL_TEST) {
+      throw new Error('Missing DATABASE_URL_TEST (required for NODE_ENV=test)');
+    }
+    return process.env.DATABASE_URL_TEST;
+  }
+  if (!process.env.DATABASE_URL) {
+    throw new Error('Missing DATABASE_URL');
+  }
+  return process.env.DATABASE_URL;
+}
 
 describe('Orion Workflow Schema - Subtask 1-1-1', () => {
   let client;
   const migrationFile = path.join(__dirname, '..', '..', 'migrations', '002_orion_workflow.sql');
 
   beforeAll(async () => {
-    client = new Client({ connectionString: process.env.DATABASE_URL });
+    const connectionString = getTestSafeDatabaseUrl();
+    client = new Client({ connectionString });
     await client.connect();
   });
 

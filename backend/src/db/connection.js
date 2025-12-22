@@ -12,8 +12,19 @@ let pool = null;
  */
 function getPool() {
   if (!pool) {
+    // Hard safety guard: tests must never run against the dev database.
+    if (process.env.NODE_ENV === 'test') {
+      if (!process.env.DATABASE_URL_TEST) {
+        throw new Error('NODE_ENV=test requires DATABASE_URL_TEST to be set');
+      }
+    } else {
+      if (!process.env.DATABASE_URL) {
+        throw new Error('Missing required env var: DATABASE_URL');
+      }
+    }
+
     const connectionString =
-      process.env.NODE_ENV === 'test' && process.env.DATABASE_URL_TEST
+      process.env.NODE_ENV === 'test'
         ? process.env.DATABASE_URL_TEST
         : process.env.DATABASE_URL;
 

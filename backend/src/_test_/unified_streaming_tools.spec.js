@@ -15,6 +15,7 @@ jest.mock('../adapters/DS_ChatAdapter');
 jest.mock('fs', () => ({
   readFileSync: jest.fn().mockReturnValue('# Orion Prompt'),
   existsSync: jest.fn().mockReturnValue(true),
+  readdirSync: jest.fn().mockReturnValue([]),
 }));
 
 // Mock list_files and functionDefinitions
@@ -280,39 +281,5 @@ describe('Unified Streaming & Tool Filtering (Subtask 2-1-19)', () => {
       );
     });
 
-    it('emits a duplication probe trace with agent full content hash and length', async () => {
-      // Arrange
-      const projectId = 'test-project';
-      const userMessage = 'Probe duplication path';
-      const mode = 'plan';
-
-      const full = 'Alpha beta gamma.';
-      const adapterStream = async function* () {
-        yield { chunk: 'Alpha ' };
-        yield { chunk: 'beta ' };
-        yield { chunk: 'gamma.' };
-        yield { done: true, fullContent: full };
-      };
-      mockAdapter.sendMessagesStreaming.mockReturnValue(adapterStream());
-
-      // Act
-      const stream = orionAgent.processStreaming(projectId, userMessage, { mode });
-      for await (const _event of stream) {
-        // drain stream
-      }
-
-      // Assert: TraceService.logEvent should have been called with our duplication probe
-      const calls = TraceService.logEvent.mock.calls.map(([arg]) => arg);
-      const probeEvent = calls.find(
-        (e) => e && e.type === 'tool_result_stream' && e.summary && e.summary.startsWith('dup_probe_agent_full_content')
-      );
-
-      expect(probeEvent).toBeDefined();
-      expect(probeEvent.source).toBe('orion');
-      expect(probeEvent.details).toBeDefined();
-      expect(typeof probeEvent.details.hash).toBe('number');
-      expect(probeEvent.details.length).toBe(full.length);
-      expect(probeEvent.details.sample).toBe(full.slice(0, 300));
-    });
   });
 });

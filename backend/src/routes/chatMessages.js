@@ -185,18 +185,6 @@ router.post('/messages', async (req, res) => {
                 requestId,
               });
 
-              // Also write a final-response probe file for side-by-side comparison
-              const {
-                logDuplicationProbe,
-              } = require("../services/trace/DuplicationProbeLogger");
-              logDuplicationProbe("final", {
-                projectId,
-                requestId,
-                mode,
-                hash: contentHash,
-                length: fullContent.length,
-                sample: fullContent.slice(0, 300),
-              });
             } catch (traceErr) {
               console.error(
                 "Trace logging failed for Orion streaming response:",

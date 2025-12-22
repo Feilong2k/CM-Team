@@ -6,14 +6,6 @@ function isTraceEnabled() {
   return raw === 'true';
 }
 
-function isDupProbeEnabled() {
-  // Separate switch for on-disk duplication probe files.
-  // Default OFF.
-  // Enable by setting ORION_DUP_PROBE_ENABLED=true
-  return process.env.ORION_DUP_PROBE_ENABLED === 'true';
-}
-
 module.exports = {
   isTraceEnabled,
-  isDupProbeEnabled,
 };

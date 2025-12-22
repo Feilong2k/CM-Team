@@ -1,17 +1,20 @@
 const fs = require('fs');
 const path = require('path');
+const { isDupProbeEnabled } = require('./TraceConfig');
 
 /**
  * Debug-only duplication probe logger.
  *
- * Always writes files to a local debug folder so we can
- * quickly compare agent vs final content without extra env setup.
- *
- * Optional env:
- * - ORION_DUP_PROBE_DIR (default: backend/debug/dup_probe relative to this file)
+ * Controlled by env:
+ * - ORION_DUP_PROBE_ENABLED=true => write files
+ * - ORION_DUP_PROBE_DIR=<path> (optional) => output directory
  */
 function logDuplicationProbe(kind, payload) {
   try {
+    if (!isDupProbeEnabled()) {
+      return;
+    }
+
     // Stable base dir: backend/debug/dup_probe relative to this file
     const defaultDir = path.join(__dirname, '../../../debug/dup_probe');
     const baseDir = process.env.ORION_DUP_PROBE_DIR || defaultDir;

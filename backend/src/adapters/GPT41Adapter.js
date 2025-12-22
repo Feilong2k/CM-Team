@@ -102,7 +102,6 @@ class GPT41Adapter extends LLMAdapter {
     }
 
     let lastError;
-    let hasYielded = false;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
@@ -206,6 +205,9 @@ class GPT41Adapter extends LLMAdapter {
     let lastError;
     let hasYielded = false;
 
+    // Safety guard (mirrors DS behavior): drop exact consecutive duplicate deltas
+    let lastContentDelta = null;
+
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         const controller = new AbortController();
@@ -236,6 +238,7 @@ class GPT41Adapter extends LLMAdapter {
         const decoder = new TextDecoder();
         let buffer = '';
         let fullContent = '';
+        let toolCalls = [];
 
         try {
           while (true) {
@@ -247,30 +250,39 @@ class GPT41Adapter extends LLMAdapter {
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const dataStr = line.slice(6);
-                if (dataStr === '[DONE]') {
-                  // Stream finished
-                  yield { done: true, fullContent };
-                  return;
+              if (!line.startsWith('data: ')) continue;
+
+              const dataStr = line.slice(6);
+              if (dataStr === '[DONE]') {
+                // Stream finished
+                yield { done: true, fullContent, toolCalls };
+                return;
+              }
+
+              try {
+                const data = JSON.parse(dataStr);
+                const delta = data?.choices?.[0]?.delta;
+                if (!delta) continue;
+
+                // Tool calls (OpenAI streams tool_calls in delta.tool_calls)
+                if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) {
+                  toolCalls = delta.tool_calls;
+                  // Yield toolCalls so OrionAgent can execute tools mid-stream
+                  yield { toolCalls: delta.tool_calls };
                 }
 
-                try {
-                  const data = JSON.parse(dataStr);
-                  if (data.choices && data.choices[0] && data.choices[0].delta) {
-                    const delta = data.choices[0].delta;
-                    if (delta.content) {
-                      // Mark as yielded BEFORE yielding so if yield throws (consumer aborted)
-                      // we do not retry.
-                      hasYielded = true;
-                      yield { chunk: delta.content };
-                      fullContent += delta.content;
-                    }
-                    // TODO: Handle tool calls in streaming
+                if (typeof delta.content === 'string' && delta.content.length > 0) {
+                  if (lastContentDelta !== null && delta.content === lastContentDelta) {
+                    continue;
                   }
-                } catch (e) {
-                  console.error('Failed to parse SSE data:', e);
+                  lastContentDelta = delta.content;
+
+                  hasYielded = true;
+                  yield { chunk: delta.content };
+                  fullContent += delta.content;
                 }
+              } catch (e) {
+                console.error('Failed to parse SSE data:', e);
               }
             }
           }
@@ -279,8 +291,8 @@ class GPT41Adapter extends LLMAdapter {
         }
 
         // If we reach here without [DONE], yield final event
-        if (fullContent) {
-          yield { done: true, fullContent };
+        if (fullContent || toolCalls.length > 0) {
+          yield { done: true, fullContent, toolCalls };
         }
         return;
 

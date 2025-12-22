@@ -3,6 +3,7 @@
 // without crashing. B2 can later replace this with a DB-backed implementation.
 
 const { createTraceEventShape } = require('./TraceEvent');
+const { isTraceEnabled } = require('./TraceConfig');
 
 // In-memory event store (test-only / dev-only for now)
 let events = [];
@@ -13,6 +14,8 @@ let events = [];
  * @param {import('./TraceEvent').TraceEvent} event
  */
 async function logEvent(event) {
+  // Default OFF
+  if (!isTraceEnabled()) return;
   if (!event || typeof event !== 'object') return;
 
   const base = createTraceEventShape();
@@ -45,6 +48,11 @@ async function logEvent(event) {
  * @returns {Promise<{ events: import('./TraceEvent').TraceEvent[], total: number }>}
  */
 async function getEvents({ projectId, type, source, limit = 50, offset = 0 } = {}) {
+  // If tracing is disabled, behave as empty.
+  if (!isTraceEnabled()) {
+    return { events: [], total: 0 };
+  }
+
   let result = events;
 
   if (projectId) {

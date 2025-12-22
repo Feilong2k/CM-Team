@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const chatMessagesRouter = require('./routes/chatMessages');
 const featuresRouter = require('./routes/features');
 const traceRouter = require('./routes/trace');
+const { isTraceEnabled } = require('./services/trace/TraceConfig');
 
 const app = express();
 
@@ -33,7 +34,11 @@ app.use(express.json());
 // Register chatMessages and features routes
 app.use('/api/chat', chatMessagesRouter);
 app.use('/api/features', featuresRouter);
-app.use('/api/trace', traceRouter);
+
+// Trace route is opt-in (TRACE_ENABLED=true)
+if (isTraceEnabled()) {
+  app.use('/api/trace', traceRouter);
+}
 
 // Health check endpoint
 app.get('/health', (req, res) => {

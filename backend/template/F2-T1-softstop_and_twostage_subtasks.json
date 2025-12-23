@@ -1,0 +1,130 @@
+[
+  {
+    "task_id": "2-1",
+    "external_id": "P1-F2-T1-S21",
+    "title": "G1 – Enhanced Soft Stop: block duplicate tool calls and force action on results",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Stop Orion from repeating identical tool calls (e.g., 3x in a row) and force it to act on existing tool results.",
+      "area": "Orion Orchestration / Tooling",
+      "notes": [
+        "Implement server-side guardrails; prompt-only changes are insufficient.",
+        "Target immediate improvement with minimal API surface change.",
+        "Primary pain: Orion repeats identical tool calls and fails to take the next action based on tool results (e.g., choosing read_file after list_files)."
+      ]
+    },
+    "instruction": {
+      "overview": "Implement an enhanced soft-stop behavior when Orion issues duplicate tool calls within the same request/session. Instead of re-executing, return cached results + a clear DUPLICATE_BLOCKED notice and prevent further executions of that signature during the request.",
+      "technical_details": {
+        "requirements": [
+          "Canonical tool signature: signature = hash(toolName + action + normalizedArgs + projectId).",
+          "normalizedArgs must be stable (deep-sort keys; trim strings; normalize JSON argument strings if present).",
+          "Per-request memory: maintain a map of signature -> { timestamp, resultSummary, fullResult? } for the current requestId.",
+          "Duplicate handling: on duplicate signature in same request, DO NOT execute tool. Return structured tool result payload with status=DUPLICATE_BLOCKED and include cached result summary.",
+          "Soft stop: maintain blockedSignatures for the request; if model calls any blocked signature again, do not execute and instead inject a system notice explaining it is blocked and that prior results should be used.",
+          "Action forcing: after any DUPLICATE_BLOCKED (and optionally after any tool execution), run a follow-up LLM turn where the duplicate signature is blocked; instruction: act on results (answer or call a different tool).",
+          "Logging: emit a trace event (tool_result or system_notice) capturing duplicate patterns: toolName, signature, projectId, requestId, count, cooldown window."
+        ],
+        "implementation_touchpoints": [
+          "backend/tools/ToolRunner.js: strengthen dedup key (canonical signature) and differentiate cache vs true execution.",
+          "backend/src/agents/OrionAgent.js: keep per-request state (blockedSignatures, signature->cachedResult) during processStreaming/process loops; block repeated signatures; inject system notices.",
+          "backend/src/services/trace/TraceService.js: add an event type/summary pattern for DUPLICATE_BLOCKED / duplicate-tool-call.",
+          "(Optional) backend/src/services/StreamingService.js: ensure done is emitted only after the forced action turn completes (already mostly handled)."
+        ]
+      },
+      "acceptance_criteria": [
+        "When Orion issues the same tool call with the same semantic parameters more than once in a single request, the tool is executed at most once.",
+        "On duplicates, the user-visible stream includes a clear notice and includes cached results (or summary) so Orion can proceed.",
+        "Orion is prevented from endlessly looping on the same signature; it must either answer or choose a different tool/parameters.",
+        "Duplicate events are trace-logged with requestId so we can analyze frequency.",
+        "Existing non-duplicate tool calls still work normally."
+      ],
+      "edge_cases": [
+        "Argument ordering/whitespace differences should not bypass dedup (canonicalization required).",
+        "Partial tool-call arguments in streaming: only dedup once arguments are complete enough to normalize.",
+        "If cached result is an error result, decide policy: either allow 1 retry after cooldown or treat as blocked; document choice.",
+        "Rate-limit and dedup windows: ensure per-request dedup is stronger than the existing global 10s window."
+      ],
+      "tara": {
+        "goal": "Add RED tests that prove duplicate tool calls are blocked and Orion acts on existing results instead of re-calling.",
+        "tests": [
+          "Add/extend a backend spec (suggest: backend/src/_test_/unified_streaming_tools.spec.js or a new spec) to simulate a model issuing the same tool_call signature 2-3x in one request.",
+          "Assert the tool implementation is invoked only once (spy/mock the underlying tool method).",
+          "Assert subsequent duplicates return a structured result containing status=DUPLICATE_BLOCKED and includes cached summary/timestamp.",
+          "Add a test that verifies OrionAgent does not loop indefinitely when duplicates happen (e.g., max iterations reached without spamming tools).",
+          "(Optional) If you implement the post-duplicate action turn, assert that the agent produces a non-tool chunk after the duplicate notice (i.e., it continues reasoning/acting)."
+        ]
+      },
+      "devon": {
+        "goal": "Implement enhanced duplicate detection + per-request blocked signatures, so Orion stops repeating identical calls and continues with next action based on results.",
+        "steps": [
+          "Implement a canonical signature builder (deep-sort args, stable stringify) for tool calls.",
+          "Track per-request signature->result cache and blockedSignatures in OrionAgent.processStreaming and process (non-streaming).",
+          "When a duplicate signature is detected: do not execute; return DUPLICATE_BLOCKED with cached results/summary.",
+          "Block further executions of that signature during the request and inject a system message telling Orion to use prior results and choose a different action.",
+          "Add trace logging for duplicates to support later analysis.",
+          "Run Tara’s tests and ensure no regressions in streaming tool-call handling (partials + done ordering)."
+        ]
+      }
+    },
+    "reason": "Fix immediate UX: Orion repeats identical tools and fails to act on tool results (soft-stop enhancement)."
+  },
+  {
+    "task_id": "2-1",
+    "external_id": "P1-F2-T1-S22",
+    "title": "G2 – Two-stage protocol foundation: tool phase → action phase (optional pause-after-tool)",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Introduce an optional two-stage orchestration mode where Orion stops after tool execution and the app explicitly resumes with results/context.",
+      "area": "Orion Orchestration / API",
+      "notes": [
+        "Builds on Soft Stop concepts (signatures, blocked sets).",
+        "Enables future UI controls like ‘pause after tool’ and potential Stop/Cancel support.",
+        "Must be backward-compatible; default remains auto-continue streaming."
+      ]
+    },
+    "instruction": {
+      "overview": "Add a foundation for a two-stage protocol: Stage 1 runs tools and returns tool results with phase metadata; Stage 2 resumes reasoning/action using those results. Keep it optional behind request flags.",
+      "technical_details": {
+        "api_behavior": [
+          "Add request option(s) to chat streaming endpoint, e.g. { orchestrationMode: 'auto'|'two_stage', pauseAfterTool: boolean }.",
+          "In two_stage + pauseAfterTool=true: stop streaming after emitting the first tool result set (or DUPLICATE_BLOCKED/budget boundary) and return phase metadata.",
+          "Return metadata fields: phase, requestId, blockedSignatures, lastToolSignature, cachedResultsSummary.",
+          "Add a resume endpoint or resume parameter that re-invokes Orion with the augmented conversation (tool result boxes + system notices), and with tool policy updated (e.g., blocked signature(s) enforced or tools disabled)."
+        ],
+        "constraints": [
+          "Must not break existing clients: if orchestrationMode not set, preserve current behavior.",
+          "Ensure streaming still delays done until server truly finalizes the current phase.",
+          "Keep tool signature canonicalization consistent with G1 so both modes share behavior."
+        ]
+      },
+      "acceptance_criteria": [
+        "Backend supports an opt-in two-stage behavior (pauseAfterTool) without changing default behavior.",
+        "When paused, the response includes enough metadata for the frontend to show tool results and resume later.",
+        "Resume continues from the exact tool results already produced (no re-execution required) and respects blocked signatures.",
+        "Trace logs can correlate both stages via requestId." 
+      ],
+      "tara": {
+        "goal": "Define tests for phase metadata and pause/resume behavior (can start as skipped until UI ready).",
+        "tests": [
+          "Add a backend test that calls the streaming endpoint with orchestrationMode=two_stage & pauseAfterTool=true and asserts the stream ends after tool results with a phase marker (no further reasoning chunks).",
+          "Add a test for the resume call that asserts Orion continues using the tool result context and does not re-run the same tool signature.",
+          "Ensure tests validate requestId correlation between stage 1 and stage 2." 
+        ]
+      },
+      "devon": {
+        "goal": "Add the two-stage orchestration foundation (flags + phase metadata + resume wiring) as an opt-in mode.",
+        "steps": [
+          "Extend the chat route/controller to accept orchestration flags.",
+          "Implement a two-stage branch in OrionAgent/StreamingService that can terminate after tool execution and return metadata (phase + blocked signatures).",
+          "Add a resume mechanism (either new endpoint or a continuation param) that rehydrates messages with tool results and continues reasoning.",
+          "Reuse the same dedup + blocked-signature mechanics from G1.",
+          "Add trace correlation for stage boundaries using requestId." 
+        ]
+      }
+    },
+    "reason": "Foundation for future UX control: pause-after-tool and eventual stop/cancel support via two-stage protocol."
+  }
+]

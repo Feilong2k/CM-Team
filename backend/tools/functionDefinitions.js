@@ -429,7 +429,7 @@ const functionDefinitions = [
     type: 'function',
     function: {
       name: 'FileSystemTool_list_files',
-      description: 'List contents of a directory (optionally recursive).',
+      description: 'List contents of a directory (optionally recursive). Respects .gitignore by default.',
       parameters: {
         type: 'object',
         properties: {
@@ -439,7 +439,11 @@ const functionDefinitions = [
           },
           recursive: {
             type: 'boolean',
-            description: 'Whether to list recursively.'
+            description: 'Whether to list recursively (default: true). Set false for a single directory level.'
+          },
+          no_ignore: {
+            type: 'boolean',
+            description: 'When true, do NOT apply .gitignore/default ignore rules (debug use only).'
           }
         },
         required: ['path']
@@ -450,7 +454,7 @@ const functionDefinitions = [
     type: 'function',
     function: {
       name: 'FileSystemTool_search_files',
-      description: 'Search for a regex pattern across files in a directory tree.',
+      description: 'Search for a regex pattern across files in a directory tree. Respects .gitignore by default.',
       parameters: {
         type: 'object',
         properties: {
@@ -460,11 +464,15 @@ const functionDefinitions = [
           },
           regex: {
             type: 'string',
-            description: 'Rust-style regex pattern to search for.'
+            description: 'JavaScript RegExp pattern (string) to search for. The server compiles this with new RegExp(regex, "i").'
           },
           file_pattern: {
             type: 'string',
-            description: 'Optional glob (e.g., *.js) to limit searched files.'
+            description: 'Optional glob (e.g., *.js) to limit searched files. (May be ignored if not implemented server-side yet.)'
+          },
+          no_ignore: {
+            type: 'boolean',
+            description: 'When true, do NOT apply .gitignore/default ignore rules (debug use only).'
           }
         },
         required: ['path', 'regex']

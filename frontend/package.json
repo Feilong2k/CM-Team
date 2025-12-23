@@ -13,14 +13,18 @@
     "test": "vitest"
   },
   "dependencies": {
+    "marked": "^17.0.1",
     "pinia": "^3.0.4",
     "vue": "^3.5.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",
+    "@vue/test-utils": "^2.4.6",
     "autoprefixer": "^10.4.20",
+    "jsdom": "^27.3.0",
     "postcss": "^8.4.41",
     "tailwindcss": "^3.4.1",
-    "vite": "^5.3.1"
+    "vite": "^5.3.1",
+    "vitest": "^4.0.16"
   }
 }

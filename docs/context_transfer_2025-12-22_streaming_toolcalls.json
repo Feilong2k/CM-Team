@@ -1,0 +1,160 @@
+{
+  "title": "Context Transfer — 2025-12-22 — Streaming tool-calls + SSE done handling + test DB safety + worklog updates",
+  "timestamp_local": "2025-12-22T08:28:51-05:00",
+  "repo": {
+    "remote": "https://github.com/Feilong2k/CM-Team.git",
+    "branch": "main",
+    "latest_commit": "066bbd11e5aa9b1a2b32a01322cba7dfda025c10"
+  },
+  "high_level_story": [
+    "Tool calling appeared broken in streaming: Orion emitted toolCalls but UI never saw tool results, because done was emitted too early (or multiple times), and tool_call fragments weren’t merged reliably.",
+    "Dev DB chat history was being wiped by Jest tests because some tests used DATABASE_URL instead of DATABASE_URL_TEST.",
+    "We removed noisy dup_probe tracing artifacts, fixed frontend history fetch to use /api proxy, and documented everything in the worklog.",
+    "We later fixed tool-call retry spam and made Orion see tool errors (instead of empty TOOL RESULT boxes)."
+  ],
+  "key_fixes": [
+    {
+      "name": "Prevent tests from mutating dev DB",
+      "problem": "backend tests used process.env.DATABASE_URL directly and executed DELETE FROM chat_messages, wiping dev history",
+      "changes": [
+        "backend/src/_test_/chat_messages_migration.spec.js: select DATABASE_URL_TEST when NODE_ENV=test",
+        "backend/src/_test_/schema_v2.spec.js: select DATABASE_URL_TEST when NODE_ENV=test",
+        "backend/src/db/connection.js: hard guard — NODE_ENV=test requires DATABASE_URL_TEST"
+      ],
+      "commit": "96f4559"
+    },
+    {
+      "name": "Fix chat history loading in frontend",
+      "problem": "ChatPanel used absolute backend URLs which bypassed Vite proxy / depended on CORS",
+      "changes": [
+        "frontend/src/components/ChatPanel.vue: use /api/chat/messages for history + streaming",
+        "frontend/src/__tests__/ChatPanel.streaming.spec.js: update expected endpoint"
+      ],
+      "commit": "fe858b9"
+    },
+    {
+      "name": "Remove dup_probe instrumentation",
+      "problem": "dup_probe produced confusing trace events and generated files that could trigger nodemon restarts",
+      "changes": [
+        "Removed backend/src/services/trace/DuplicationProbeLogger.js and call-sites",
+        "Removed related tests and probe assertions"
+      ],
+      "commit": "bf21f3d"
+    },
+    {
+      "name": "Streaming tool-calls fixed (partial tool_call deltas + early done)",
+      "problem": "Orion streamed toolCalls, but tool_calls arrived as fragments; OrionAgent overwrote fragments; done was emitted before tools executed so UI never saw tool results",
+      "changes": [
+        "backend/src/agents/OrionAgent.js: merge tool_call fragments by id/index; delay forwarding done until after tool execution",
+        "backend/src/_test_/orion_streaming_partial_toolcalls.spec.js: regression tests for partial tool_calls"
+      ],
+      "commit": "83839d6"
+    },
+    {
+      "name": "SSE done handling fixed (tool results disappearing)",
+      "problem": "UI displayed tool result chunks during streaming but then they disappeared at completion because backend emitted early/multiple done events and frontend overwrote content on done",
+      "changes": [
+        "backend/src/services/StreamingService.js: buffer upstream done; emit exactly one done at end; fullContent built from actual streamed chunks"
+      ],
+      "commit": "e3e64af"
+    },
+    {
+      "name": "Tool-call reliability: stop retry spam + surface tool errors to Orion",
+      "problem": "When requesting non-existent subtask (e.g. 2-1-199), trace showed many tool_call/tool_result pairs and Orion saw empty TOOL RESULT boxes",
+      "root_causes": [
+        "ToolRunner retries failing tool calls up to 3 attempts (maxAttempts=3), and DatabaseToolAgentAdapter logs each attempt as tool_call/tool_result.",
+        "OrionAgent boxed tool results via JSON.stringify(result.result); on failure ToolRunner returns {success:false,error:...} so result.result is undefined => empty box.",
+        "OrionAgent can also request the same tool again on subsequent iterations (maxIterations=5), so you can see multiple batches over time, not just 3."
+      ],
+      "changes": [
+        "backend/src/agents/OrionAgent.js: box failures as {ok:false,error,details,attempts,toolCallId}",
+        "backend/tools/ToolRunner.js: deterministic non-retryable errors (not found, MISSING_PROJECT_CONTEXT) break retry loop early",
+        "backend/src/_test_/toolrunner_nonretryable_errors.spec.js: ensures NOT_FOUND errors attempt only once"
+      ],
+      "commit": "0d0fb6c"
+    },
+    {
+      "name": "Worklog update",
+      "changes": [
+        ".Docs/Worklog/2025-12-22_streaming_duplication_fix.md: appended section (4) about tool-call retry spam + tool error boxing"
+      ],
+      "commit": "066bbd1"
+    }
+  ],
+  "key_files_touched": [
+    "backend/src/agents/OrionAgent.js",
+    "backend/src/services/StreamingService.js",
+    "backend/tools/ToolRunner.js",
+    "backend/tools/DatabaseToolAgentAdapter.js",
+    "backend/src/db/connection.js",
+    "backend/src/_test_/orion_streaming_partial_toolcalls.spec.js",
+    "backend/src/_test_/toolrunner_nonretryable_errors.spec.js",
+    "backend/src/_test_/chat_messages_migration.spec.js",
+    "backend/src/_test_/schema_v2.spec.js",
+    "frontend/src/components/ChatPanel.vue",
+    "frontend/src/utils/streamOrionReply.js",
+    ".Docs/Worklog/2025-12-22_streaming_duplication_fix.md"
+  ],
+  "how_to_reproduce_key_issues": {
+    "tool_results_missing_or_disappearing": {
+      "description": "Send a prompt that triggers a tool call (e.g. ask Orion to run DatabaseTool_get_subtask_full_context). Previously tool results would appear then vanish on done; fixed by buffering done and emitting once.",
+      "manual_test": "Use UI ACT mode or curl SSE POST /api/chat/messages and watch for TOOL RESULT chunks before done."
+    },
+    "not_found_subtask_error": {
+      "description": "Request subtask 2-1-199 which should not exist. Expect Orion to receive and display a TOOL RESULT payload with ok:false and the error message.",
+      "expected_error": "Subtask with ID 2-1-199 not found"
+    },
+    "dev_db_wipe_protection": {
+      "description": "Run backend tests and confirm they hit DATABASE_URL_TEST (appdb_test), not DATABASE_URL (appdb).",
+      "command": "npm test --prefix backend"
+    }
+  },
+  "notes_on_rate_limiting_vs_retries": {
+    "what_user_saw": "Trace showed more than 3 tool_call/tool_result pairs.",
+    "why": [
+      "ToolRunner does up to 3 internal attempts per tool call (retries). Each attempt is logged by DatabaseToolAgentAdapter, so it looks like 3 calls instantly.",
+      "Orion can request the tool again in subsequent iterations/turns (maxIterations=5), leading to multiple batches.",
+      "Rate limiting (3 per 10s) is per-key per executeToolCalls invocation, and does not stop internal retries; also batches happened ~10s apart so limiter allowed them."
+    ]
+  },
+  "tests_added_or_updated": [
+    {
+      "path": "backend/src/_test_/orion_streaming_partial_toolcalls.spec.js",
+      "purpose": "Ensure streaming tool_call fragments are merged and executed once"
+    },
+    {
+      "path": "backend/src/_test_/toolrunner_nonretryable_errors.spec.js",
+      "purpose": "Ensure deterministic not-found errors are not retried"
+    }
+  ],
+  "next_subtask_candidates": [
+    {
+      "candidate": "GPT-4.1 streaming tool_calls",
+      "why": "Ensure GPT41Adapter streaming path correctly surfaces delta.tool_calls and integrates with Orion tool execution; there is an existing test gpt41_streaming_toolcalls.spec.js"
+    },
+    {
+      "candidate": "Trace persistence",
+      "why": "TraceService is currently in-memory; consider DB-backed trace events so debugging survives restarts"
+    },
+    {
+      "candidate": "Admin/edit DB workflow",
+      "why": "User wants ability to manage tasks/subtasks directly; could add lightweight admin endpoints or recommend DBeaver/pgAdmin usage"
+    }
+  ],
+  "user_preferences_and_context": {
+    "project_id": "P1",
+    "backend_port": 3500,
+    "frontend_ports": "6100-6120",
+    "env": {
+      "DATABASE_URL": "postgresql://postgres:postgres@192.168.0.4:5432/appdb",
+      "DATABASE_URL_TEST": "postgresql://postgres:postgres@192.168.0.4:5432/appdb_test"
+    },
+    "tooling": [
+      "Express backend with SSE streaming",
+      "PostgreSQL",
+      "Vue frontend with Vite dev-server proxy (/api)",
+      "Jest backend tests",
+      "Vitest frontend tests"
+    ]
+  }
+}

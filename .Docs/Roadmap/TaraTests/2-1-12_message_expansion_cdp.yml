@@ -1,0 +1,178 @@
+# CDP Analysis: Subtask 2-1-12 — Clamp latest user message + align to top on send
+# Analyst: Tara
+# Date: 2025-12-22
+# Status: RED Phase — Failing Tests Required
+
+## 1. Revised Requirements
+
+Based on final user clarification:
+1. **All user messages are clamped** to ~3 lines by default with Show more/Show less toggle
+2. **Each message maintains independent expand/collapse state**
+3. **The latest user message is positioned at the top after clamping** - after sending a message, chat scrolls so newest user message is at top of viewport (block:start)
+
+## 2. Atomic Actions
+
+### A. Clamp Detection & Application
+- **Behavior**: Determine if user message exceeds ~3 lines, apply CSS line-clamp
+- **Observable Outcome**: Long user messages show "Show more" button; short ones don't
+- **Risk Level**: MEDIUM (CSS line-height calculation can be browser-dependent)
+- **Test Seam**: Data attributes (`data-clamped="true"`) or CSS classes on message elements
+
+### B. All Messages Clamped
+- **Behavior**: All user messages get clamp marker (not just latest)
+- **Observable Outcome**: Every user message has `data-clamped="true"` if long enough
+- **Risk Level**: LOW (consistent application)
+- **Test Seam**: Attribute binding applied to all user message elements
+
+### C. Expand/Collapse Toggle
+- **Behavior**: Click "Show more" removes clamp, shows full message, changes text to "Show less"
+- **Observable Outcome**: Message expands, `data-clamped="false"`, button text changes
+- **Risk Level**: LOW (simple UI toggle)
+- **Test Seam**: Button click handler toggles expanded state per message
+
+### D. Independent State Per Message
+- **Behavior**: Each message maintains its own expanded/collapsed state
+- **Observable Outcome**: Messages can be independently expanded/collapsed
+- **Risk Level**: LOW (per-message state management)
+- **Test Seam**: State tracking per message ID or index
+
+### E. Scroll to Top on Send
+- **Behavior**: After sending user message, scroll latest user message to top of viewport
+- **Observable Outcome**: `scrollIntoView({ block: 'start' })` called on latest user message
+- **Risk Level**: MEDIUM (timing with async operations, DOM readiness)
+- **Test Seam**: Message send handler calls scrollIntoView
+
+### F. Streaming Integration
+- **Behavior**: Clamp/toggle functionality doesn't interfere with AI streaming
+- **Observable Outcome**: AI messages still stream correctly while user messages are clamped
+- **Risk Level**: LOW (independent functionality)
+- **Test Seam**: Both features work simultaneously
+
+## 3. Resources Touched
+
+### A. DOM Elements
+- **Resource Type**: User message div elements
+- **Access Pattern**: READ/WRITE (clamp attribute toggling, scroll positioning)
+- **Isolation Risks**: Performance with many messages
+- **Mitigation**: Only latest message gets active clamp
+
+### B. Browser Scroll API
+- **Resource Type**: `Element.scrollIntoView`
+- **Access Pattern**: WRITE (position message at top)
+- **Isolation Risks**: Browser compatibility, timing with DOM updates
+- **Mitigation**: Use standard options, call after DOM update
+
+### C. CSS Layout Engine
+- **Resource Type**: CSS line-clamp implementation
+- **Access Pattern**: READ (line height calculation)
+- **Isolation Risks**: Browser inconsistencies in line-clamp support
+- **Mitigation**: Feature detection, fallback to max-height
+
+## 4. System Physics
+
+### A. Line Clamp Timing
+- **Physical Limits**: CSS line-clamp applies after layout, may cause content flash
+- **Failure Modes**: Incorrect line count if fonts not loaded
+- **Mitigations**: Use `data-clamped` attribute for testability, not reliant on visual rendering
+
+### B. Scroll Timing
+- **Physical Limits**: `scrollIntoView` called before DOM update may not work
+- **Failure Modes**: Message not positioned correctly
+- **Mitigations**: Call in `nextTick()` or after DOM update
+
+### C. Streaming Coordination
+- **Physical Limits**: Multiple async operations (send message, start streaming, scroll)
+- **Failure Modes**: Race conditions
+- **Mitigations**: Proper async/await sequencing
+
+## 5. Anti-Placeholder Analysis
+
+### 🚫 Invalid Test Patterns (Would Pass with Placeholder)
+1. **Clamp Detection**: Test that only checks if any message has clamp (not specifically latest)
+2. **Scroll Test**: Test that mocks scrollIntoView but doesn't verify correct element/timing
+3. **Toggle Test**: Test that doesn't verify attribute changes (`data-clamped`)
+
+### ✅ Valid Test Patterns (Fail with Placeholder)
+1. **All Messages Clamped**: Test that verifies all user messages have clamp marker
+2. **Button Presence**: Test that verifies toggle button appears for long messages, not short
+3. **Attribute Toggle**: Test that verifies `data-clamped` changes on expand/collapse
+4. **Independent State**: Test that verifies messages can be independently expanded/collapsed
+5. **Scroll Called**: Test that verifies `scrollIntoView` called with correct options
+6. **Streaming Integration**: Test that verifies both clamping and streaming work together
+
+## 6. Test Seam Validation
+
+### ✅ Clear Seams Exist
+- **Input**: User message content → Clamp detection → Attribute setting
+- **Processing**: Button click → Toggle state → Attribute update
+- **Output**: `data-clamped` attribute change, button text change, scroll position update
+
+### 🚨 Potential Blockers
+- **Test Selectors**: Need stable `data-testid` for toggle button (`user-msg-toggle`)
+- **Attribute Naming**: Need agreement on clamp attribute name (`data-clamped` vs class)
+- **Scroll Options**: Need agreement on `scrollIntoView` options (`{ block: 'start' }`)
+
+## 7. Security Analysis
+
+### A. XSS via Message Content
+- **Risk**: Malicious message content could inject scripts
+- **Mitigation**: User messages use `textContent` not `innerHTML`
+- **Test Required**: YES (but covered by existing tests)
+
+### B. Performance Impact
+- **Risk**: Line-clamp calculations on every message
+- **Mitigation**: Only calculate for latest message
+- **Test Required**: NO (performance testing out of scope)
+
+## 8. Test Scenarios (Priority Order)
+
+### CRITICAL (Must Fail with Placeholder)
+1. **A**: Clamp applies to all user messages
+2. **B1**: Show more/less appears for long messages
+3. **B2**: Show more/less does NOT appear for short messages  
+4. **C1**: Toggle expands message (Show more → Show less)
+5. **C2**: Toggle collapses message (Show less → Show more)
+6. **D**: Independent state per message
+7. **E**: Align latest user message to top on send
+
+### HIGH (Essential Behavior)
+8. **F**: Does not break streaming
+9. **E2**: scrollIntoView not called during streaming chunks
+
+## 9. Clarification Requests
+
+### RESOLVED
+1. **Scope**: Only latest user message gets clamp (not all messages)
+2. **Positioning**: Latest message scrolled to top after send
+3. **Implementation**: Use `data-clamped` attribute and `data-testid` for testability
+
+### PENDING
+1. **Line Count Algorithm**: Exact implementation details for "~3 lines"
+2. **CSS vs JS**: Pure CSS line-clamp or JS-based calculation?
+
+## 10. Blocking Status
+
+### ✅ UNBLOCKED
+- Core requirements clarified
+- Test seams identified
+- Can write failing tests based on agreed attributes/selectors
+
+## 11. Next Steps
+
+1. Write failing unit tests in `ChatPanel.streaming.spec.js`
+2. Ensure tests fail with current implementation (no clamping, no scroll positioning)
+3. Document test failures for Devon
+
+---
+
+**CDP Analyst Signature**: Tara  
+**Date**: 2025-12-22  
+**Status**: READY FOR TEST IMPLEMENTATION</content>
+<task_progress>
+- [x] Analyze revised requirements
+- [x] Update CDP analysis
+- [x] Rewrite tests to match new requirements
+- [x] Add scrollIntoView test
+- [x] Ensure tests are deterministic
+- [ ] Verify all test cases are covered
+</task_progress>

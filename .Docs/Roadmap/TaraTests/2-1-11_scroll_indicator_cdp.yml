@@ -1,0 +1,157 @@
+# CDP Analysis: Subtask 2-1-11 — Icon-only New Messages Indicator & Auto-scroll Resume
+# Analyst: Tara
+# Date: 2025-12-22
+# Status: RED Phase — Failing Tests Required
+
+## 1. Atomic Actions
+
+### A. Indicator Visibility Toggle
+- **Behavior**: When user scrolls away from bottom (`shouldAutoScroll` becomes false) and a new AI message object is appended, a down-arrow indicator appears.
+- **Observable Outcome**: Indicator element is visible (aria-label "Scroll to newest message").
+- **Risk Level**: MEDIUM (UI state synchronization)
+- **Test Seam**: `ChatPanel` component state (`hasNewMessagesBelow`) → DOM visibility
+
+### B. Indicator Click Action
+- **Behavior**: Clicking the indicator scrolls to bottom, hides indicator, and re-enables auto-scroll.
+- **Observable Outcome**: `scrollTop` at bottom, indicator hidden, `shouldAutoScroll` true.
+- **Risk Level**: LOW (well-defined interaction)
+- **Test Seam**: Click event → `scrollToBottom` call → state updates
+
+### C. Manual Scroll Detection
+- **Behavior**: When user manually scrolls to bottom (`isAtBottom` true), indicator clears automatically.
+- **Observable Outcome**: Indicator hidden without click.
+- **Risk Level**: MEDIUM (scroll event timing, race conditions)
+- **Test Seam**: `handleScroll` → `isAtBottom` detection → state clear
+
+### D. Streaming Chunk Guard
+- **Behavior**: Incremental streaming chunks (SSE) that update existing AI message content do NOT trigger indicator.
+- **Observable Outcome**: Indicator only appears when new message objects are appended, not per chunk.
+- **Risk Level**: HIGH (incorrect triggering would cause UI flicker)
+- **Test Seam**: Message array length change detection vs. content updates
+
+### E. Infinite Scroll Compatibility
+- **Behavior**: Loading older messages (`loadingOlder` true) does not affect indicator state.
+- **Observable Outcome**: Indicator remains unchanged during older message load.
+- **Risk Level**: LOW (edge case)
+- **Test Seam**: `loadOlderMessages` path → indicator state unchanged
+
+## 2. Resources Touched
+
+### A. DOM (Browser)
+- **Resource Type**: UI Elements
+- **Access Pattern**: READ (scroll position, visibility), WRITE (scroll position, indicator display)
+- **Isolation Risks**: CSS layout shifts, z‑index conflicts, accessibility
+- **Mitigation**: Use data‑testid for reliable selection, ARIA labels
+
+### B. Component State (Vue Reactive)
+- **Resource Type**: In‑memory reactive state
+- **Access Pattern**: READ/WRITE (`hasNewMessagesBelow`, `shouldAutoScroll`, `isAtBottom`)
+- **Isolation Risks**: State inconsistency, race conditions between scroll events and message updates
+- **Mitigation**: Computed properties, watchers with proper guards
+
+### C. Scroll Container
+- **Resource Type**: DOM Element
+- **Access Pattern**: READ (`scrollTop`, `scrollHeight`, `clientHeight`), WRITE (`scrollTo`)
+- **Isolation Risks**: Browser‑specific scroll behavior, performance during rapid updates
+- **Mitigation**: Throttle scroll events, use `requestAnimationFrame`
+
+## 3. System Physics
+
+### A. Scroll Event Timing
+- **Physical Limits**: Browser event loop, frame rate (60fps)
+- **Failure Modes**: Scroll events fire faster than state updates, causing missed `isAtBottom` detection
+- **Mitigations**: Debounce scroll handler, use `getBoundingClientRect` for accuracy
+
+### B. Message Append Timing
+- **Physical Limits**: Network latency, Vue reactivity batch updates
+- **Failure Modes**: Indicator appears before scroll position stabilizes, causing visual jump
+- **Mitigations**: Use `nextTick` after message append before evaluating scroll position
+
+### C. Concurrent Updates
+- **Physical Limits**: Multiple message appends during streaming
+- **Failure Modes**: Indicator flicker, count increments incorrectly
+- **Mitigations**: Atomic state updates, guard against duplicate triggers
+
+## 4. Anti-Placeholder Analysis
+
+### 🚫 Invalid Test Patterns (Would Pass with Placeholder)
+1. **Indicator Visibility**: Test that only checks if indicator element exists in DOM (could be always present but hidden)
+2. **Scroll Detection**: Test that mocks `isAtBottom` as always true (bypasses actual scroll detection)
+3. **Message Counting**: Test that counts any array change as new message (would pass with streaming chunk updates)
+4. **Click Handler**: Test that only verifies click event was called (not that scroll actually happened)
+
+### ✅ Valid Test Patterns (Fail with Placeholder)
+1. **Indicator Visibility**: Test that indicator appears ONLY when `shouldAutoScroll` is false AND new message object appended
+2. **Scroll Detection**: Test that indicator clears when `isAtBottom` becomes true via actual scroll simulation
+3. **Streaming Guard**: Test that indicator does NOT appear when only AI message content updates (no new message object)
+4. **Click Action**: Test that clicking indicator calls `scrollToBottom` and updates `shouldAutoScroll` to true
+
+## 5. Test Seam Validation
+
+### ✅ Clear Seams Exist
+- **Input**: Scroll events, message array changes
+- **Processing**: Vue reactive state, computed properties
+- **Output**: DOM visibility, scroll position changes
+
+### 🚨 Potential Blockers
+- **Testability**: Need stable selectors for indicator (data‑testid or aria‑label)
+- **Scroll Simulation**: Must accurately simulate scroll positions in JSDOM environment
+- **Timing**: Need to control Vue's `nextTick` and async updates in tests
+
+## 6. Security Analysis
+
+### A. XSS via Message Content
+- **Risk**: Malicious message content could affect indicator rendering
+- **Mitigation**: Vue's built‑in HTML escaping, safe DOM updates
+- **Test Required**: NO (covered by general XSS tests)
+
+### B. Accessibility
+- **Risk**: Indicator not keyboard‑navigable or screen‑reader accessible
+- **Mitigation**: Proper ARIA attributes, focus management
+- **Test Required**: YES (verify aria‑label present, keyboard navigation works)
+
+## 7. Test Scenarios (Priority Order)
+
+### CRITICAL (Must Fail with Placeholder)
+1. **C1**: Indicator appears when user scrolled up and new AI message object appended
+2. **C2**: Clicking indicator scrolls to bottom, hides indicator, re‑enables auto‑scroll
+3. **C3**: Manual scroll to bottom clears indicator without click
+4. **C4**: Streaming chunks (content updates) do NOT trigger indicator
+
+### HIGH (Essential Behavior)
+5. **H1**: Indicator never appears when already at bottom
+6. **H2**: Multiple new messages increment count only once per message object
+7. **H3**: Loading older messages does not affect indicator
+
+### MEDIUM (Edge Cases)
+8. **M1**: Rapid scroll up/down while messages arrive
+9. **M2**: Very long messages that push indicator out of viewport
+10. **M3**: Window resize during indicator visibility
+
+### LOW (Non‑critical)
+11. **L1**: Visual appearance (CSS) of indicator
+12. **L2**: Animation smoothness
+
+## 8. Clarification Requests (RESOLVED)
+
+### Resolution
+- **Indicator Selector**: Use `data-testid="chat-scroll-to-bottom"` and `aria-label="Scroll to newest message"`
+- **Scroll Container**: Use `data-testid="chat-messages-container"` (to be added to the element with `ref="messagesContainer"` and class `flex-1 overflow-y-auto px-4`)
+- **Count Display**: Icon only, no counter badge (MVP)
+
+## 9. Blocking Status
+
+### ✅ UNBLOCKED
+- All selectors confirmed.
+- Tests can now be written with stable, unique selectors.
+
+## 10. Next Steps
+
+1. Write/extend Vitest tests in `frontend/src/__tests__/ChatPanel.streaming.spec.js`.
+2. Ensure tests fail with current implementation (no indicator logic).
+3. Document test failures for Devon.
+
+---
+**CDP Analyst Signature**: Tara  
+**Date**: 2025-12-22  
+**Status**: UNBLOCKED — READY FOR TEST IMPLEMENTATION

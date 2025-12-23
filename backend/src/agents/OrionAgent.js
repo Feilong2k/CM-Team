@@ -1,7 +1,15 @@
 const BaseAgent = require('./BaseAgent');
 const path = require('path');
 const fs = require('fs');
+
+// NOTE: OrionAgent builds a file list internally and injects it into the system prompt.
+// This is NOT a runtime tool call.
+// We reuse the same implementation as the `list_files` helper so we can:
+// - respect .gitignore (and sensible defaults)
+// - keep behavior consistent across the app
 const { listFiles } = require('../../tools/list_files');
+const { loadIgnorePatterns } = require('../../tools/ignore_utils');
+
 const functionDefinitions = require('../../tools/functionDefinitions');
 const TraceService = require('../services/trace/TraceService');
 const { TRACE_TYPES, TRACE_SOURCES } = require('../services/trace/TraceEvent');
@@ -147,40 +155,35 @@ class OrionAgent extends BaseAgent {
       }
 
       // Get list of available files (context building)
+      // Uses .gitignore-aware listing so Orion sees the repo (CM-TEAM) without noise.
       try {
-        const rootDir = process.cwd();
-        const whitelist = ['backend', 'frontend', '.Docs', 'src'];
-        const files = [];
+        // IMPORTANT: Do not rely on process.cwd() here.
+        // When the backend is launched from /backend, cwd becomes that folder.
+        // Resolve repo root from this file location instead.
+        const rootDir = path.resolve(__dirname, '../../..');
 
-        for (const dir of whitelist) {
-          const fullPath = path.join(rootDir, dir);
-          if (fs.existsSync(fullPath)) {
-            const walk = (dirPath) => {
-              const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-              for (const entry of entries) {
-                const res = path.resolve(dirPath, entry.name);
-                const relPath = path.relative(rootDir, res);
+        const ignoreInstance = loadIgnorePatterns(rootDir);
+        const tree = listFiles(rootDir, rootDir, ignoreInstance);
 
-                if (relPath.includes('node_modules') || relPath.includes('.git') || relPath.includes('dist') || relPath.includes('build')) {
-                  continue;
-                }
-
-                if (entry.isDirectory()) {
-                  walk(res);
-                } else {
-                  files.push(relPath);
-                }
-              }
-            };
-            walk(fullPath);
+        const entries = [];
+        const flatten = (nodes) => {
+          for (const node of nodes) {
+            if (!node) continue;
+            if (node.type === 'directory') {
+              // include directories as navigational context
+              if (node.path) entries.push(`${node.path}/`);
+              flatten(node.children || []);
+            } else if (node.type === 'file') {
+              if (node.path) entries.push(node.path);
+            }
           }
-        }
+        };
+        flatten(tree);
 
-        ['package.json', 'README.md'].forEach((f) => {
-          if (fs.existsSync(path.join(rootDir, f))) files.push(f);
-        });
+        // Keep prompt stable between runs
+        entries.sort((a, b) => a.localeCompare(b));
 
-        context.systemState.files = files;
+        context.systemState.files = entries;
       } catch (fsError) {
         console.error('Error listing files for context:', fsError);
         context.systemState.files = ['Error listing files'];
@@ -216,6 +219,14 @@ class OrionAgent extends BaseAgent {
 
     // Build context and system prompt
     const context = await this.buildContext(projectId);
+
+    // Ensure request-scoped identifiers are available to ToolRunner for:
+    // - centralized tool_call/tool_result tracing
+    // - per-request duplicate blocking
+    if (options && options.requestId) {
+      context.requestId = options.requestId;
+    }
+
     const systemPrompt = this.formatSystemPrompt(context, mode);
 
     // Format messages for the adapter
@@ -424,8 +435,19 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
     let continueLoop = true;
 
     // Define allowed read-only tools for PLAN mode
+    // NOTE: Tools may be named either as bare helpers (list_files) or as prefixed
+    // tool-schema names (FileSystemTool_list_files). We allow both.
     const PLAN_MODE_WHITELIST = [
-      'read_file', 'list_files', 'search_files', 'list_code_definition_names',
+      'read_file',
+      'list_files',
+      'search_files',
+      'list_code_definition_names',
+
+      // FileSystemTool-prefixed read-only calls
+      'FileSystemTool_read_file',
+      'FileSystemTool_list_files',
+      'FileSystemTool_search_files',
+
       'DatabaseTool_get_subtask_full_context',
       'DatabaseTool_list_subtasks_by_status',
       'DatabaseTool_search_subtasks'
@@ -512,6 +534,18 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
           for (const result of results) {
             const toolLabel = result.toolName || 'tool';
 
+            // If a tool call was blocked as a duplicate, Orion can fall into a loop
+            // where it keeps retrying the tool. Emit an explicit system instruction
+            // to stop retrying and reuse the previous results contained in the payload.
+            if (!result.success && result.error === 'DUPLICATE_BLOCKED') {
+              const stopRetryMsg = `\n\n**System Notice:** Tool call was blocked as DUPLICATE_BLOCKED. Do NOT call this tool again in this turn. Reuse the previous results included below.\n\n`;
+              yield { chunk: stopRetryMsg };
+              messages.push({
+                role: 'system',
+                content: `Stop: ${toolLabel} was blocked as DUPLICATE_BLOCKED. You MUST NOT retry this tool call again in this turn. Use the previous results provided in the TOOL RESULT payload.`
+              });
+            }
+
             // ToolRunner returns a structured object:
             // { success, result? } on success, or { success:false, error, details? } on failure.
             // Previously we only boxed `result.result`, which is undefined on failures,
@@ -571,13 +605,21 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
     }
     // PLAN mode: only allow read-only tools
     const readOnlyPatterns = [
+      // bare helper names
       /^read_file$/,
       /^list_files$/,
       /^search_files$/,
       /^list_code_definition_names$/,
+
+      // FileSystemTool-prefixed names
+      /^FileSystemTool_read_file$/,
+      /^FileSystemTool_list_files$/,
+      /^FileSystemTool_search_files$/,
+
+      // DB read-only
       /^DatabaseTool_get_/, 
       /^DatabaseTool_list_/, 
-      /^DatabaseTool_search_/,
+      /^DatabaseTool_search_/, 
     ];
     const filtered = {};
     for (const [name, impl] of Object.entries(allTools)) {

@@ -67,9 +67,19 @@ async function getEvents({ projectId, type, source, limit = 50, offset = 0 } = {
     result = result.filter((e) => e.source === source);
   }
 
+  // Default UX expectation for trace timelines: show the MOST RECENT events.
+  // We keep the returned slice in chronological order (oldest->newest) so the UI
+  // renders a natural timeline, but we window from the tail by default.
   const total = result.length;
-  const start = Math.max(0, offset | 0);
-  const end = start + (limit | 0 || 50);
+
+  const limitNum = (limit | 0) || 50;
+  const offsetNum = Math.max(0, offset | 0);
+
+  // Interpret offset as "offset from the most recent" (tail window), not from the start.
+  // offset=0,limit=50 => last 50
+  // offset=50,limit=50 => prior 50, etc.
+  const end = Math.max(0, total - offsetNum);
+  const start = Math.max(0, end - limitNum);
 
   return { events: result.slice(start, end), total };
 }

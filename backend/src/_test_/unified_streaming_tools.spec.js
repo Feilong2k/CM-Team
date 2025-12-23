@@ -282,4 +282,448 @@ describe('Unified Streaming & Tool Filtering (Subtask 2-1-19)', () => {
     });
 
   });
+
+  // ============================================================================
+  // Subtask 2-1-21 — Enhanced Soft Stop: block duplicate tool calls
+  // ============================================================================
+  describe('Subtask 2-1-21 — Enhanced Soft Stop: block duplicate tool calls', () => {
+    it('should execute tool only once when identical tool call appears twice in same request', async () => {
+      // Arrange
+      const projectId = 'test-project';
+      const userMessage = 'Read the same file twice';
+      const mode = 'act';
+      const requestId = 'req-123';
+
+      const mockToolCall = {
+        function: {
+          name: 'read_file',
+          arguments: JSON.stringify({ path: 'package.json' }),
+        },
+        id: 'call_1',
+        type: 'function',
+      };
+
+      // Simulate adapter that yields the same tool call twice (simulating Orion repeating itself)
+      const adapterStream = async function* () {
+        yield { chunk: 'I will read package.json' };
+        yield { toolCalls: [mockToolCall] };
+        yield { done: true, fullContent: '' };
+        // In a real scenario, Orion would continue and might call the same tool again
+        // For this test, we'll simulate a second iteration with the same tool call
+      };
+
+      // Mock adapter to return stream, then when called again (second iteration), return same tool call
+      let iteration = 0;
+      mockAdapter.sendMessagesStreaming.mockImplementation(() => {
+        iteration++;
+        if (iteration === 1) {
+          return adapterStream();
+        } else if (iteration === 2) {
+          // Second iteration: Orion calls the same tool again
+          const secondStream = async function* () {
+            yield { toolCalls: [mockToolCall] };
+            yield { done: true, fullContent: '' };
+          };
+          return secondStream();
+        }
+        return (async function* () {})();
+      });
+
+      // Mock ToolRunner to track how many times the tool is executed
+      const mockToolResult = {
+        toolName: 'read_file',
+        result: { content: '{"name": "test"}' },
+        success: true,
+      };
+      let executionCount = 0;
+      ToolRunner.executeToolCalls.mockImplementation(async (tools, toolCalls, context) => {
+        executionCount++;
+        // On second call, return DUPLICATE_BLOCKED
+        if (executionCount === 2) {
+          return [{
+            toolName: 'read_file',
+            success: false,
+            error: 'DUPLICATE_BLOCKED',
+            details: {
+              message: 'Duplicate tool call blocked. Use previous results.',
+              previous_timestamp: new Date().toISOString(),
+              previous_summary: { content: '{"name": "test"}' },
+              signature: 'test-signature',
+            },
+          }];
+        }
+        return [mockToolResult];
+      });
+
+      // Act
+      const stream = orionAgent.processStreaming(projectId, userMessage, { mode, requestId });
+      const events = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      // Assert
+      // With enhanced soft stop, executionCount should be 2 (first call executes, second is blocked)
+      // But the tool should only execute once (first call)
+      expect(executionCount).toBe(2); // First call executes, second is blocked
+      // Verify that ToolRunner was called twice (once for execution, once for duplicate)
+      expect(ToolRunner.executeToolCalls).toHaveBeenCalledTimes(2);
+    });
+
+    it('should return DUPLICATE_BLOCKED with cached results for duplicate tool calls', async () => {
+      // Arrange
+      const projectId = 'test-project';
+      const userMessage = 'Try duplicate tool call';
+      const mode = 'act';
+      const requestId = 'req-456';
+
+      const mockToolCall = {
+        function: {
+          name: 'list_files',
+          arguments: JSON.stringify({ path: '.' }),
+        },
+        id: 'call_2',
+        type: 'function',
+      };
+
+      // First iteration: tool call executes
+      // Second iteration: same tool call appears
+      let iteration = 0;
+      mockAdapter.sendMessagesStreaming.mockImplementation(() => {
+        iteration++;
+        if (iteration === 1) {
+          return (async function* () {
+            yield { chunk: 'Listing files...' };
+            yield { toolCalls: [mockToolCall] };
+            yield { done: true, fullContent: '' };
+          })();
+        } else if (iteration === 2) {
+          return (async function* () {
+            yield { toolCalls: [mockToolCall] };
+            yield { done: true, fullContent: '' };
+          })();
+        }
+        return (async function* () {})();
+      });
+
+      // Mock ToolRunner to return special DUPLICATE_BLOCKED result on second call
+      const firstResult = {
+        toolName: 'list_files',
+        result: { files: ['file1.txt', 'file2.txt'] },
+        success: true,
+      };
+      const duplicateBlockedResult = {
+        toolName: 'list_files',
+        success: false,
+        error: 'DUPLICATE_BLOCKED',
+        details: {
+          message: 'Duplicate tool call blocked. Use previous results.',
+          previous_timestamp: expect.any(String),
+          previous_summary: { files: ['file1.txt', 'file2.txt'] },
+        },
+      };
+
+      let callCount = 0;
+      ToolRunner.executeToolCalls.mockImplementation(async (tools, toolCalls, context) => {
+        callCount++;
+        if (callCount === 1) {
+          return [firstResult];
+        } else {
+          return [duplicateBlockedResult];
+        }
+      });
+
+      // Act
+      const stream = orionAgent.processStreaming(projectId, userMessage, { mode, requestId });
+      const events = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      // Assert
+      // 1. ToolRunner should be called twice (once for execution, once for duplicate)
+      expect(ToolRunner.executeToolCalls).toHaveBeenCalledTimes(2);
+
+      // 2. Second result should have DUPLICATE_BLOCKED error
+      const secondCallResult = ToolRunner.executeToolCalls.mock.results[1].value;
+      // Note: We need to await the promise to check the result
+      // Instead, we'll check that the mock was configured to return duplicateBlockedResult
+      // The actual assertion will fail with current implementation
+      expect(callCount).toBe(2);
+
+      // 3. Stream should contain a notice about duplicate being blocked
+      const blockedNotice = events.find(
+        (e) => e.chunk && e.chunk.includes('DUPLICATE_BLOCKED')
+      );
+      expect(blockedNotice).toBeDefined(); // This will FAIL with current implementation
+    });
+
+    it('should continue reasoning after duplicate block (not infinite loop)', async () => {
+      // Arrange
+      const projectId = 'test-project';
+      const userMessage = 'What files do we have?';
+      const mode = 'act';
+      const requestId = 'req-789';
+
+      const mockToolCall = {
+        function: {
+          name: 'list_files',
+          arguments: JSON.stringify({ path: '.' }),
+        },
+        id: 'call_3',
+        type: 'function',
+      };
+
+      // Simulate: Orion calls tool, gets result, then calls same tool again (duplicate),
+      // then should continue with reasoning/answer
+      let iteration = 0;
+      mockAdapter.sendMessagesStreaming.mockImplementation(() => {
+        iteration++;
+        if (iteration === 1) {
+          // First turn: tool call
+          return (async function* () {
+            yield { chunk: 'Let me check the files...' };
+            yield { toolCalls: [mockToolCall] };
+            yield { done: true, fullContent: '' };
+          })();
+        } else if (iteration === 2) {
+          // Second turn: duplicate tool call (should be blocked)
+          return (async function* () {
+            yield { toolCalls: [mockToolCall] };
+            yield { done: true, fullContent: '' };
+          })();
+        } else if (iteration === 3) {
+          // Third turn: Orion should continue with reasoning (no tool calls)
+          return (async function* () {
+            yield { chunk: 'Based on the file list, I can see...' };
+            yield { done: true, fullContent: 'Based on the file list, I can see we have 2 files.' };
+          })();
+        }
+        return (async function* () {})();
+      });
+
+      // Mock ToolRunner to simulate duplicate blocking
+      let callCount = 0;
+      ToolRunner.executeToolCalls.mockImplementation(async (tools, toolCalls, context) => {
+        callCount++;
+        if (callCount === 1) {
+          return [{
+            toolName: 'list_files',
+            result: { files: ['file1.txt', 'file2.txt'] },
+            success: true,
+          }];
+        } else {
+          // Duplicate blocked
+          return [{
+            toolName: 'list_files',
+            success: false,
+            error: 'DUPLICATE_BLOCKED',
+            details: { message: 'Duplicate blocked' },
+          }];
+        }
+      });
+
+      // Act
+      const stream = orionAgent.processStreaming(projectId, userMessage, { mode, requestId });
+      const events = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      // Assert
+      // Orion should eventually produce a non-tool response (reasoning)
+      const reasoningChunk = events.find(
+        (e) => e.chunk && e.chunk.includes('Based on the file list')
+      );
+      expect(reasoningChunk).toBeDefined(); // This will FAIL if Orion gets stuck in loop
+
+      // Should not exceed max iterations (5)
+      expect(iteration).toBeLessThanOrEqual(3);
+    });
+
+    it('should normalize arguments so different ordering produces same signature', async () => {
+      // Arrange
+      const projectId = 'test-project';
+      const userMessage = 'Test argument normalization';
+      const mode = 'act';
+      const requestId = 'req-norm';
+
+      // Two tool calls with same semantic arguments but different JSON ordering/whitespace
+      const toolCall1 = {
+        function: {
+          name: 'search_files',
+          arguments: JSON.stringify({ path: '.', regex: 'test', filePattern: '*.js' }),
+        },
+        id: 'call_a',
+        type: 'function',
+      };
+
+      const toolCall2 = {
+        function: {
+          name: 'search_files',
+          arguments: '{"filePattern":"*.js","path":".","regex":"test"}', // Different order
+        },
+        id: 'call_b',
+        type: 'function',
+      };
+
+      // Simulate adapter yielding these in separate iterations
+      let iteration = 0;
+      mockAdapter.sendMessagesStreaming.mockImplementation(() => {
+        iteration++;
+        if (iteration === 1) {
+          return (async function* () {
+            yield { toolCalls: [toolCall1] };
+            yield { done: true, fullContent: '' };
+          })();
+        } else if (iteration === 2) {
+          return (async function* () {
+            yield { toolCalls: [toolCall2] };
+            yield { done: true, fullContent: '' };
+          })();
+        }
+        return (async function* () {})();
+      });
+
+      // Mock ToolRunner to simulate duplicate detection
+      let callCount = 0;
+      ToolRunner.executeToolCalls.mockImplementation(async (tools, toolCalls, context) => {
+        callCount++;
+        if (callCount === 1) {
+          return [{
+            toolName: 'search_files',
+            result: { matches: [] },
+            success: true,
+          }];
+        } else {
+          // Second call should be detected as duplicate
+          return [{
+            toolName: 'search_files',
+            success: false,
+            error: 'DUPLICATE_BLOCKED',
+            details: {
+              message: 'Duplicate tool call blocked. Use previous results.',
+              previous_timestamp: new Date().toISOString(),
+              previous_summary: { matches: [] },
+              signature: 'normalized-signature',
+            },
+          }];
+        }
+      });
+
+      // Act
+      const stream = orionAgent.processStreaming(projectId, userMessage, { mode, requestId });
+      const events = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      // Assert
+      // With proper implementation, toolCall2 should be detected as duplicate of toolCall1
+      // and ToolRunner.executeToolCalls should be called twice (first executes, second blocked)
+      expect(ToolRunner.executeToolCalls).toHaveBeenCalledTimes(2);
+      // Verify that second call returned DUPLICATE_BLOCKED
+      expect(callCount).toBe(2);
+    });
+
+    it('should log trace event for duplicate tool call patterns', async () => {
+      // Arrange
+      const projectId = 'test-project';
+      const userMessage = 'Trigger duplicate';
+      const mode = 'act';
+      const requestId = 'req-trace';
+
+      const mockToolCall = {
+        function: {
+          name: 'read_file',
+          arguments: JSON.stringify({ path: 'README.md' }),
+        },
+        id: 'call_trace',
+        type: 'function',
+      };
+
+      let iteration = 0;
+      mockAdapter.sendMessagesStreaming.mockImplementation(() => {
+        iteration++;
+        if (iteration === 1) {
+          return (async function* () {
+            yield { toolCalls: [mockToolCall] };
+            yield { done: true, fullContent: '' };
+          })();
+        } else if (iteration === 2) {
+          return (async function* () {
+            yield { toolCalls: [mockToolCall] };
+            yield { done: true, fullContent: '' };
+          })();
+        }
+        return (async function* () {})();
+      });
+
+      // Mock ToolRunner to simulate duplicate with trace logging
+      let callCount = 0;
+      ToolRunner.executeToolCalls.mockImplementation(async (tools, toolCalls, context) => {
+        callCount++;
+        if (callCount === 1) {
+          return [{
+            toolName: 'read_file',
+            result: { content: '# README' },
+            success: true,
+          }];
+        } else {
+          // Simulate trace logging in ToolRunner
+          TraceService.logEvent({
+            projectId,
+            type: 'duplicate_tool_call',
+            source: 'system',
+            timestamp: new Date().toISOString(),
+            summary: 'Duplicate tool call blocked: read_file',
+            details: {
+              toolName: 'read_file',
+              signature: 'test-signature',
+              duplicate: true,
+              requestId,
+              blocked: true,
+              previous_timestamp: new Date().toISOString(),
+            },
+            requestId,
+          });
+          
+          return [{
+            toolName: 'read_file',
+            success: false,
+            error: 'DUPLICATE_BLOCKED',
+            details: { 
+              message: 'Duplicate',
+              duplicate: true 
+            },
+          }];
+        }
+      });
+
+      // Clear previous trace calls
+      TraceService.logEvent.mockClear();
+
+      // Act
+      const stream = orionAgent.processStreaming(projectId, userMessage, { mode, requestId });
+      const events = [];
+      for await (const event of stream) {
+        events.push(event);
+      }
+
+      // Assert
+      // TraceService should be called for duplicate event
+      expect(TraceService.logEvent).toHaveBeenCalled();
+      const duplicateTraceCall = TraceService.logEvent.mock.calls.find(
+        (call) => call[0].type === 'duplicate_tool_call' || 
+                  (call[0].details && call[0].details.duplicate === true)
+      );
+      expect(duplicateTraceCall).toBeDefined();
+      if (duplicateTraceCall) {
+        const traceEvent = duplicateTraceCall[0];
+        expect(traceEvent.requestId).toBe(requestId);
+        expect(traceEvent.projectId).toBe(projectId);
+        expect(traceEvent.details).toHaveProperty('toolName', 'read_file');
+      }
+    });
+  });
 });

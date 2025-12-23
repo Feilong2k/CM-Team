@@ -1,5 +1,6 @@
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+// Vitest globals are enabled via vitest.config.js (test.globals = true)
+// so we rely on global describe/it/expect/vi to avoid runner import issues.
 import TraceDashboard from '../components/TraceDashboard.vue'
 
 // Helper to create a mock JSON response

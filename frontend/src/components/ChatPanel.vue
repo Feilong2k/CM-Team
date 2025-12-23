@@ -5,7 +5,8 @@
     </div>
     <div 
       ref="messagesContainer"
-      class="flex-1 overflow-y-auto px-4"
+      data-testid="chat-messages-container"
+      class="flex-1 overflow-y-auto px-4 relative"
       @scroll="handleScroll"
     >
       <!-- Loading indicator when loading older messages -->
@@ -20,13 +21,27 @@
           v-for="(message, index) in messages"
           :key="index"
           :data-testid="getDataTestId(message)"
+          :data-clamped="isMessageClamped(message) ? 'true' : 'false'"
           :class="[
-            'p-3 rounded',
+            'p-3 rounded relative',
             message.type === 'user' ? 'bg-gray-800 text-gray-200 user-message' : 'ai-message'
           ]"
         >
-          <div v-if="message.type === 'user'">
-            {{ message.content }}
+          <div v-if="message.type === 'user'" class="flex flex-col">
+            <div 
+              :class="getMessageContentClasses(message)"
+            >
+              {{ message.content }}
+            </div>
+            <!-- Toggle button for long messages -->
+            <button
+              v-if="isMessageLong(message.content)"
+              data-testid="user-msg-toggle"
+              @click="toggleMessageExpansion(index)"
+              class="mt-2 text-xs text-neon-blue hover:text-neon-cyan self-start"
+            >
+              {{ getToggleButtonText(message) }}
+            </button>
           </div>
           <div v-else>
              <div v-html="message.html"></div>
@@ -40,6 +55,19 @@
       <div v-if="loadingInitial" class="text-center py-4 text-neon-blue text-xs">
         Loading messages...
       </div>
+
+      <!-- Scroll to bottom indicator -->
+      <button
+        v-if="showScrollToBottomIndicator"
+        data-testid="chat-scroll-to-bottom"
+        aria-label="Scroll to newest message"
+        @click="scrollToBottomAndHideIndicator"
+        class="absolute bottom-4 right-4 p-2 bg-neon-blue text-black rounded-full shadow-lg hover:bg-neon-cyan transition-colors"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M16.707 10.293a1 1 0 010 1.414l-6 6a1 1 0 01-1.414 0l-6-6a1 1 0 111.414-1.414L9 14.586V3a1 1 0 012 0v11.586l4.293-4.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+        </svg>
+      </button>
     </div>
     <!-- Message input -->
     <div class="p-4 border-t border-[#333333] flex items-center gap-4">
@@ -75,11 +103,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, watch, computed } from 'vue'
+import { ref, onMounted, nextTick, computed } from 'vue'
 import { useUIStore } from '../stores/uiStore'
 import MessageInput from './MessageInput.vue'
 import { renderMarkdown } from '../utils/markdown.js'
 import { streamOrionReply } from '../utils/streamOrionReply.js'
+import { useScrollIndicator } from '../composables/useScrollIndicator.js'
+import { useMessageExpansion } from '../composables/useMessageExpansion.js'
 
 const uiStore = useUIStore()
 
@@ -109,6 +139,15 @@ const currentOffset = ref(0)
 const limit = 10
 const projectId = 'P1' // Default project ID
 
+// Message expansion composable
+const {
+  isMessageLong,
+  toggleMessageExpansion,
+  isMessageClamped,
+  getMessageContentClasses,
+  getToggleButtonText
+} = useMessageExpansion(messages, { charThreshold: 150, lineClamp: 3 })
+
 // Helper to determine data-testid
 const getDataTestId = (message) => {
   if (message.type === 'user') return 'chat-msg-user'
@@ -121,17 +160,14 @@ onMounted(() => {
   loadInitialMessages()
 })
 
-// Track if we should auto-scroll (when new messages are added at the end)
-const shouldAutoScroll = ref(true)
-
-// Watch messages array for changes to auto-scroll only when shouldAutoScroll is true
-watch(messages, () => {
-  if (shouldAutoScroll.value) {
-    nextTick(() => {
-      scrollToBottom()
-    })
-  }
-}, { deep: true })
+// Scroll indicator composable
+const {
+  shouldAutoScroll,
+  showScrollToBottomIndicator,
+  scrollToBottom: scrollToBottomIndicator,
+  scrollToBottomAndHideIndicator: scrollToBottomAndHideIndicatorFn,
+  handleScroll: handleScrollIndicator
+} = useScrollIndicator(messages, messagesContainer, loadingOlder)
 
 // Load initial messages (most recent 10)
 const loadInitialMessages = async () => {
@@ -157,7 +193,7 @@ const loadInitialMessages = async () => {
     
     // Scroll to bottom after loading
     nextTick(() => {
-      scrollToBottom()
+      scrollToBottomIndicator()
     })
   } catch (error) {
     console.error('Error loading messages:', error)
@@ -242,19 +278,18 @@ const handleScroll = () => {
     loadOlderMessages()
   }
 
-  // Smart auto-scroll: only true if user is near bottom (within 50px)
-  // Only update if we are not loading older messages to prevent interference
-  if (!loadingOlder.value) {
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50
-    shouldAutoScroll.value = isAtBottom
-  }
+  // Delegate scroll indicator logic to composable
+  handleScrollIndicator()
 }
 
-// Scroll to bottom of messages
+// Scroll to bottom of messages (legacy function, use scrollToBottomIndicator from composable)
 const scrollToBottom = () => {
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-  }
+  scrollToBottomIndicator()
+}
+
+// Scroll to bottom and hide indicator (legacy function, use scrollToBottomAndHideIndicatorFn from composable)
+const scrollToBottomAndHideIndicator = () => {
+  scrollToBottomAndHideIndicatorFn()
 }
 
 const handleSendMessage = async (messageText) => {
@@ -265,14 +300,34 @@ const handleSendMessage = async (messageText) => {
   // Clear draft immediately on send
   draftMessage.value = ''
 
-  // Add user message
+  // STEP 1: Add user message with default isExpanded = false
   messages.value.push({
     type: 'user',
     content: messageText,
-    html: null
+    html: null,
+    isExpanded: false
   })
+  
+  // Update offset for user message
+  currentOffset.value += 1
 
-  // Create placeholder for AI response
+  // STEP 2: Scroll user message to top BEFORE adding AI message
+  await nextTick()
+  
+  // Find and scroll to the user message
+  const userMessages = messagesContainer.value?.querySelectorAll('[data-testid="chat-msg-user"]')
+  if (userMessages && userMessages.length > 0) {
+    const lastUserMessage = userMessages[userMessages.length - 1]
+    
+    // Force immediate scroll to top
+    lastUserMessage.scrollIntoView({ 
+      block: 'start', 
+      inline: 'nearest',
+      behavior: 'instant'  // Use 'instant' for immediate scroll without animation
+    })
+  }
+
+  // STEP 3: Now add AI message placeholder
   messages.value.push({
     type: 'ai',
     content: '',
@@ -283,8 +338,8 @@ const handleSendMessage = async (messageText) => {
   // Get reference to the reactive message object
   const aiMessage = messages.value[messages.value.length - 1]
   
-  // Update offset (user + ai)
-  currentOffset.value += 2
+  // Update offset for AI message
+  currentOffset.value += 1
 
   // Use Vite dev-server proxy (`frontend/vite.config.js`) so we don't depend on CORS.
   const endpoint = '/api/chat/messages'

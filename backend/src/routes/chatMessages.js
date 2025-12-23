@@ -96,7 +96,12 @@ router.post('/messages', async (req, res) => {
   }
 
   const projectId = deriveProjectId(external_id, metadata) || 'P1';
-  const requestId = metadata && metadata.requestId ? metadata.requestId : undefined;
+
+  // Ensure every request gets a unique requestId so per-request tool dedup/soft-stop
+  // never collides across different user turns.
+  const requestId = (metadata && metadata.requestId)
+    ? metadata.requestId
+    : `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
   try {
     if (sender === 'user') {

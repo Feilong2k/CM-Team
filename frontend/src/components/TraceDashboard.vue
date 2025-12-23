@@ -118,6 +118,8 @@ const typeClass = (type) => {
       return 'text-neon-blue'
     case 'tool_call':
       return 'text-neon-pink'
+    case 'duplicate_tool_call':
+      return 'text-red-300'
     case 'tool_result':
       return 'text-green-300'
     case 'llm_call':

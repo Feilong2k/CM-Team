@@ -1,0 +1,183 @@
+# CDP Analysis: Subtask 2-1-21 — Enhanced Soft Stop: block duplicate tool calls and force action on results
+# Analyst: Tara
+# Date: 2025-12-22
+# Status: RED Phase — Failing Tests Required
+
+## 1. Atomic Actions
+
+### A. Canonical Tool Signature Generation
+- **Behavior**: Generate a stable hash signature from tool name, action, normalized arguments, and projectId
+- **Observable Outcome**: Same semantic tool calls produce identical signatures regardless of argument ordering/whitespace
+- **Risk Level**: HIGH (signature collisions could block legitimate different calls)
+- **Test Seam**: ToolRunner or OrionAgent signature builder function
+
+### B. Per-Request Duplicate Detection
+- **Behavior**: Track executed tool signatures within a single request; detect duplicates
+- **Observable Outcome**: Second identical tool call in same request is blocked
+- **Risk Level**: MEDIUM (requires proper request boundary tracking)
+- **Test Seam**: OrionAgent.processStreaming maintains blockedSignatures map per requestId
+
+### C. DUPLICATE_BLOCKED Response
+- **Behavior**: When duplicate detected, return structured result with status=DUPLICATE_BLOCKED and cached result summary
+- **Observable Outcome**: Stream includes blocked notice with previous results instead of executing tool
+- **Risk Level**: MEDIUM (must ensure cached results are included and formatted correctly)
+- **Test Seam**: ToolRunner.executeToolCalls returns special result structure
+
+### D. Action Forcing After Duplicate
+- **Behavior**: After DUPLICATE_BLOCKED, run follow-up LLM turn with blocked signature enforced
+- **Observable Outcome**: Orion continues reasoning/acting based on cached results instead of re-calling
+- **Risk Level**: HIGH (critical to prevent infinite loops)
+- **Test Seam**: OrionAgent.processStreaming continues loop with blocked signature in context
+
+### E. Trace Logging for Duplicates
+- **Behavior**: Emit trace events for duplicate patterns with requestId correlation
+- **Observable Outcome**: TraceService.logEvent called with duplicate-tool-call event type
+- **Risk Level**: LOW (observability feature)
+- **Test Seam**: TraceService.logEvent mock verification
+
+## 2. Resources Touched
+
+### A. Memory (Per-Request State)
+- **Resource Type**: In-memory data structures
+- **Access Pattern**: READ/WRITE (signature->result cache, blockedSignatures set)
+- **Isolation Risks**: Memory leak if request state not cleaned up
+- **Mitigation**: Request-scoped cleanup, LRU eviction
+
+### B. Tool Execution Engine
+- **Resource Type**: ToolRunner module
+- **Access Pattern**: READ (tool registry), EXECUTE (tool methods)
+- **Isolation Risks**: Bypassing duplicate detection due to signature normalization bugs
+- **Mitigation**: Comprehensive signature normalization tests
+
+### C. LLM Context Window
+- **Resource Type**: Conversation history
+- **Access Pattern**: READ/WRITE (appending system notices about blocked calls)
+- **Isolation Risks**: Context window overflow with repeated blocked notices
+- **Mitigation**: Truncation or summarization of repeated blocks
+
+### D. Trace Database
+- **Resource Type**: PostgreSQL trace events
+- **Access Pattern**: WRITE (duplicate pattern logging)
+- **Isolation Risks**: Performance impact from high-volume duplicate logging
+- **Mitigation**: Sampling or aggregation for high-frequency duplicates
+
+## 3. System Physics
+
+### A. Signature Normalization Consistency
+- **Physical Limits**: JSON stringification differences (key order, whitespace, formatting)
+- **Failure Modes**: False negatives (duplicates not detected) or false positives (different calls blocked)
+- **Mitigations**: Deep-sort keys, stable stringify, trim whitespace
+
+### B. Streaming Partial Tool Calls
+- **Physical Limits**: Tool arguments arrive incrementally in streaming mode
+- **Failure Modes**: Premature dedup on incomplete arguments
+- **Mitigations**: Only dedup when tool call is complete (toolCalls event with done flag)
+
+### C. Request Boundary Definition
+- **Physical Limits**: What constitutes a "single request" in streaming context
+- **Failure Modes**: Duplicate detection leaking across unrelated user messages
+- **Mitigations**: Clear requestId scoping, timeout-based cleanup
+
+### D. Cache Coherence
+- **Physical Limits**: Cached results may become stale if underlying data changes
+- **Failure Modes**: Orion acts on stale cached results
+- **Mitigations**: Short TTL for cached results, invalidation on external changes
+
+## 4. Anti-Placeholder Analysis
+
+### 🚫 Invalid Test Patterns (Would Pass with Placeholder)
+1. **Signature Generation**: Test that only checks if hash function is called (not if normalization is correct)
+2. **Duplicate Detection**: Test that mocks ToolRunner to always return success (doesn't verify actual blocking)
+3. **Cached Results**: Test that doesn't verify cached results are included in DUPLICATE_BLOCKED response
+4. **Action Forcing**: Test that doesn't verify Orion continues reasoning after duplicate block
+
+### ✅ Valid Test Patterns (Fail with Placeholder)
+1. **Signature Generation**: Test that different argument orderings produce same signature
+2. **Duplicate Detection**: Test that tool implementation is invoked only once for identical calls
+3. **DUPLICATE_BLOCKED Response**: Test that blocked response includes status field and cached summary
+4. **Action Forcing**: Test that Orion produces non-tool content after duplicate block (continues reasoning)
+5. **Trace Logging**: Test that TraceService.logEvent is called with duplicate event details
+
+## 5. Test Seam Validation
+
+### ✅ Clear Seams Exist
+- **Input**: Tool calls with arguments → Signature builder → Duplicate detection
+- **Processing**: Tool execution or DUPLICATE_BLOCKED response generation
+- **Output**: Stream chunks with tool results or blocked notices
+
+### 🚨 Potential Blockers
+- **Signature Builder Location**: Need to identify where canonical signature logic will be implemented (ToolRunner vs OrionAgent)
+- **Request State Management**: Need clear interface for per-request blockedSignatures tracking
+- **Stream Injection Format**: Need specification for DUPLICATE_BLOCKED chunk format in stream
+
+## 6. Security Analysis
+
+### A. Signature Collision Attacks
+- **Risk**: Maliciously crafted arguments causing signature collisions
+- **Mitigation**: Cryptographic hash with salt, input validation
+- **Test Required**: YES (verify different semantic calls don't collide)
+
+### B. Cache Poisoning
+- **Risk**: Injecting malicious cached results that affect subsequent reasoning
+- **Mitigation**: Signature includes projectId, validate cached result structure
+- **Test Required**: YES (verify cached results are properly sanitized)
+
+### C. Denial of Service via Blocked Signatures
+- **Risk**: Malicious user could trigger many blocked signatures exhausting memory
+- **Mitigation**: Per-request limits, LRU eviction
+- **Test Required**: YES (verify memory limits are enforced)
+
+## 7. Test Scenarios (Priority Order)
+
+### CRITICAL (Must Fail with Placeholder)
+1. **C1**: Identical tool call executed twice in same request → tool implementation invoked only once
+2. **C2**: Second identical call returns DUPLICATE_BLOCKED with status field and cached results
+3. **C3**: Argument normalization: different whitespace/ordering produces same signature
+4. **C4**: After DUPLICATE_BLOCKED, Orion continues with reasoning/answer (not infinite loop)
+5. **C5**: Different tool calls (different args) are not blocked
+
+### HIGH (Essential Behavior)
+6. **H1**: Per-request isolation: duplicate in new request executes normally
+7. **H2**: Trace event logged for duplicate with requestId, toolName, signature
+8. **H3**: Blocked signature prevents further identical calls in same request
+9. **H4**: Error results are also cached and returned on duplicates (policy decision needed)
+
+### MEDIUM (Edge Cases)
+10. **M1**: Streaming partial tool calls: dedup only when call is complete
+11. **M2**: Large argument normalization (deep objects, arrays)
+12. **M3**: Mixed allowed and blocked tools in same request
+
+### LOW (Non-critical)
+13. **L1**: Performance of signature generation with large arguments
+14. **L2**: Memory usage of per-request caches
+
+## 8. Clarification Requests
+
+### Required
+1. **Signature Implementation Location**: Will canonical signature logic be in ToolRunner.executeToolCalls or OrionAgent?
+2. **Cached Result Format**: What exact structure should be returned in DUPLICATE_BLOCKED response?
+3. **Error Result Policy**: Should error results be cached and returned on duplicates, or allow retry?
+4. **Stream Format**: What is the exact chunk format for DUPLICATE_BLOCKED in the stream?
+
+### Optional
+5. **Request Scope TTL**: Should there be a timeout for per-request state cleanup?
+6. **Signature Algorithm**: What hash function should be used (simple string hash vs crypto)?
+
+## 9. Blocking Status
+
+### ⚠️ PARTIALLY BLOCKED
+- Clarification needed on signature implementation location and DUPLICATE_BLOCKED format.
+- Without these, we cannot write accurate failing tests.
+
+## 10. Next Steps
+
+1. Seek clarification on the above points.
+2. Once unblocked, write failing unit tests extending `unified_streaming_tools.spec.js`.
+3. Ensure tests fail with placeholder implementation (current ToolRunner returns DUPLICATE_TOOL_CALL warning).
+4. Document test failures for Devon.
+
+---
+
+**CDP Analyst Signature**: Tara  
+**Date**: 2025-12-22  
+**Status**: AWAITING CLARIFICATION

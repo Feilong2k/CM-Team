@@ -42,6 +42,8 @@ const TRACE_TYPES = [
   'orion_response',
   'tool_call',
   'tool_result',
+  // Duplicate / soft-stop events
+  'duplicate_tool_call',
   'llm_call',
   'llm_result',
   'system_error',

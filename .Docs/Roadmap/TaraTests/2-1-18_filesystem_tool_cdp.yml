@@ -1,0 +1,182 @@
+# CDP Analysis: Subtask 2-1-18 — FileSystemTool compatibility with Orion tool-calling
+# Analyst: Tara
+# Date: 2025-12-22
+# Status: RED Phase — Failing Tests Required
+
+## 1. Requirements Analysis
+
+### A. Single-args Object Contract
+- **Current State**: FileSystemTool methods accept single args object
+  - `read_file({ path })` ✓
+  - `write_to_file({ path, content })` ✓
+  - `list_files(args)` ✓ (but passes args.path, args.recursive only)
+  - `search_files(args)` ✓ (but passes args.path, args.regex, args.file_pattern only)
+- **Missing**: `no_ignore` parameter support in list_files and search_files
+- **Risk**: Tools may accept positional args incorrectly
+
+### B. .gitignore Auto-ignore by Default (with opt-out)
+- **Current State**: `list_files.js` and `search_files.js` support `--no-ignore` CLI flag
+- **Missing**: Integration with FileSystemTool methods via `no_ignore` parameter
+- **Risk**: Default behavior may not respect .gitignore
+
+### C. All Errors Propagated to Orion
+- **Current State**: ToolRunner returns `success: false` with `error` string
+- **Missing**: Need to verify FileSystemTool throws proper errors for invalid args
+- **Risk**: Silent failures or incorrect error propagation
+
+### D. Minimal Process Metadata on Every ToolRunner Result Item
+- **Current State**: ToolRunner returns objects with:
+  - `success` (boolean) ✓
+  - `attempts` (number) ✓
+  - `timestamp` (string) ✓
+  - `toolCallId` (string|null) ✓
+- **Missing**: Need to verify this applies to ALL result types:
+  - Success results
+  - Invalid args errors
+  - Blocked calls (DUPLICATE_BLOCKED, TOOL_CALL_TOO_FREQUENT)
+  - Legacy dedup warning responses
+
+## 2. Atomic Actions
+
+### A. Single-args Contract Validation
+- **Behavior**: Each FileSystemTool method must accept exactly one args object
+- **Observable Outcome**: Methods reject positional args, require named parameters
+- **Test Seam**: Direct method calls with various argument formats
+
+### B. .gitignore Default Behavior
+- **Behavior**: By default, list_files/search_files respect .gitignore + default patterns
+- **Observable Outcome**: Ignored files (node_modules/, .git/) excluded from results
+- **Test Seam**: `no_ignore` parameter toggles ignore behavior
+
+### C. Error Propagation
+- **Behavior**: All errors (invalid args, access denied, invalid regex) propagate to Orion
+- **Observable Outcome**: ToolRunner returns `success: false` with meaningful `error` string
+- **Test Seam**: Error messages in ToolRunner results
+
+### D. Process Metadata Consistency
+- **Behavior**: Every ToolRunner result includes required metadata fields
+- **Observable Outcome**: All result objects have `success`, `attempts`, `timestamp`, `toolCallId`
+- **Test Seam**: Inspection of ToolRunner.executeToolCalls return values
+
+## 3. Resources Touched
+
+### A. File System
+- **Resource Type**: Local files and directories
+- **Access Pattern**: READ/WRITE (file operations)
+- **Isolation Risks**: Test pollution, cleanup requirements
+- **Mitigation**: Use temp fixtures, cleanup after tests
+
+### B. .gitignore Patterns
+- **Resource Type**: Ignore configuration files
+- **Access Pattern**: READ (pattern loading)
+- **Isolation Risks**: System-dependent patterns
+- **Mitigation**: Create test-specific .gitignore files
+
+### C. ToolRunner State
+- **Resource Type**: In-memory caches (recentToolCalls, cachedToolResults)
+- **Access Pattern**: READ/WRITE (state tracking)
+- **Isolation Risks**: Test interference
+- **Mitigation**: Reset state between tests
+
+## 4. System Physics
+
+### A. Path Safety
+- **Physical Limits**: Directory traversal prevention
+- **Failure Modes**: Access to files outside project root
+- **Mitigations**: `_isPathSafe` method in FileSystemTool
+
+### B. Regex Validation
+- **Physical Limits**: Invalid regex patterns
+- **Failure Modes**: Uncaught regex errors crashing process
+- **Mitigations**: Try-catch in search_files
+
+### C. Ignore Pattern Loading
+- **Physical Limits**: Nested .gitignore files, pattern precedence
+- **Failure Modes**: Incorrect ignore behavior
+- **Mitigations**: Use `ignore` npm package
+
+## 5. Anti-Placeholder Analysis
+
+### 🚫 Invalid Test Patterns (Would Pass with Placeholder)
+1. **Single-args**: Test that doesn't verify methods reject positional args
+2. **.gitignore**: Test that doesn't create actual ignored files
+3. **Error Propagation**: Test that mocks errors instead of triggering real ones
+4. **Metadata**: Test that doesn't check ALL result types
+
+### ✅ Valid Test Patterns (Fail with Placeholder)
+1. **Single-args**: Test that calls methods with positional args, expects failure
+2. **.gitignore**: Test that creates ignored file, verifies exclusion by default
+3. **Error Propagation**: Test that triggers real errors (invalid regex, missing path)
+4. **Metadata**: Test that verifies all 4 metadata fields on success/error/blocked/warning results
+
+## 6. Test Seam Validation
+
+### ✅ Clear Seams Exist
+- **Input**: Tool call → ToolRunner → FileSystemTool method → File system operation
+- **Processing**: Args validation, ignore filtering, error handling
+- **Output**: Structured result with metadata
+
+### 🚨 Potential Blockers
+- **Test Fixtures**: Need temp directory with .gitignore for reliable tests
+- **State Cleanup**: ToolRunner caches may affect test independence
+- **Ignore Behavior**: Need to verify default ignore patterns work correctly
+
+## 7. Security Analysis
+
+### A. Path Traversal
+- **Risk**: Access to files outside project root
+- **Mitigation**: `_isPathSafe` method
+- **Test Required**: YES (verify access denied for `../` paths)
+
+### B. Regex Denial of Service
+- **Risk**: Malicious regex patterns causing high CPU
+- **Mitigation**: Timeout or regex validation
+- **Test Required**: NO (out of scope)
+
+## 8. Test Scenarios (Priority Order)
+
+### CRITICAL (Must Fail with Placeholder)
+1. **Single-args Contract**: FileSystemTool methods reject positional args
+2. **.gitignore Default**: Ignored files excluded by default in list/search
+3. **.gitignore Opt-out**: `no_ignore: true` includes ignored files
+4. **Error Propagation**: Invalid args produce `success: false` with error
+5. **Metadata on Success**: Successful results include all 4 metadata fields
+6. **Metadata on Error**: Error results include all 4 metadata fields
+7. **Metadata on Blocked**: DUPLICATE_BLOCKED results include all 4 metadata fields
+8. **Metadata on Warning**: DUPLICATE_TOOL_CALL warning results include all 4 metadata fields
+
+### HIGH (Essential Behavior)
+9. **Path Safety**: Directory traversal attempts produce clear error
+10. **Regex Validation**: Invalid regex produces clear error
+11. **Missing Args**: Missing required args produces clear error
+
+## 9. Clarification Requests
+
+### RESOLVED
+1. **Contract**: Single args object required
+2. **.gitignore**: Default respect with `no_ignore` opt-out
+3. **Metadata**: Required fields on all result types
+
+### PENDING
+1. **Default Ignore Patterns**: Exact list of default patterns to verify
+2. **Error Message Format**: Specific wording requirements for errors
+
+## 10. Blocking Status
+
+### ✅ UNBLOCKED
+- Core requirements clear
+- Existing implementations provide test seams
+- Can write failing tests based on current code
+
+## 11. Next Steps
+
+1. Create `backend/src/_test_/filesystem_tool.spec.js`
+2. Write failing tests for all critical scenarios
+3. Ensure tests fail with current implementation
+4. Document test failures for Devon
+
+---
+
+**CDP Analyst Signature**: Tara  
+**Date**: 2025-12-22  
+**Status**: READY FOR TEST IMPLEMENTATION

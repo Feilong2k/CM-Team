@@ -4,7 +4,6 @@
 
 const DatabaseToolModule = require('./DatabaseTool');
 const TraceService = require('../src/services/trace/TraceService');
-const { TRACE_TYPES, TRACE_SOURCES } = require('../src/services/trace/TraceEvent');
 
 // Resolve a usable DatabaseTool **instance** (not the class constructor).
 // In production, backend/tools/DatabaseTool exports a default instance with
@@ -60,19 +59,25 @@ const DatabaseToolAgentAdapter = {
       projectId = context.projectId.trim();
     }
 
-    // Log tool_call event (ensure type, source, and timestamp are friendly for UI)
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: 'tool_call',
-        source: 'tool',
-        timestamp: new Date().toISOString(),
-        summary: 'DatabaseTool_get_subtask_full_context call',
-        details: { subtaskId, projectId },
-        requestId: context?.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for get_subtask_full_context call:', err);
+    // ToolRunner now emits centralized tool_call/tool_result trace events.
+    // Only emit adapter-level events when NOT invoked by ToolRunner.
+    const shouldTrace = !context?.__trace_from_toolrunner;
+
+    // Log tool_call event
+    if (shouldTrace) {
+      try {
+        await TraceService.logEvent({
+          projectId,
+          type: 'tool_call',
+          source: 'tool',
+          timestamp: new Date().toISOString(),
+          summary: 'DatabaseTool_get_subtask_full_context call',
+          details: { subtaskId, projectId },
+          requestId: context?.requestId,
+        });
+      } catch (err) {
+        console.error('Trace logging failed for get_subtask_full_context call:', err);
+      }
     }
 
     // Call original method (falls back to direct call if bound version is not available,
@@ -86,48 +91,51 @@ const DatabaseToolAgentAdapter = {
     try {
       result = await targetFn(subtaskId, projectId);
     } catch (error) {
-      // Log a tool_result-style error event so the gap is visible in the trace timeline
-      try {
-        await TraceService.logEvent({
-          projectId,
-          type: 'tool_result',
-          source: 'tool',
-          timestamp: new Date().toISOString(),
-          summary: 'DatabaseTool_get_subtask_full_context error',
-          details: {
-            ok: false,
-            hasSubtask: false,
-            error: error.message,
-          },
-          error: { message: error.message },
-          requestId: context?.requestId,
-        });
-      } catch (traceErr) {
-        console.error('Trace logging failed for get_subtask_full_context error:', traceErr);
+      if (shouldTrace) {
+        // Log a tool_result-style error event so the gap is visible in the trace timeline
+        try {
+          await TraceService.logEvent({
+            projectId,
+            type: 'tool_result',
+            source: 'tool',
+            timestamp: new Date().toISOString(),
+            summary: 'DatabaseTool_get_subtask_full_context error',
+            details: {
+              ok: false,
+              hasSubtask: false,
+              error: error.message,
+            },
+            error: { message: error.message },
+            requestId: context?.requestId,
+          });
+        } catch (traceErr) {
+          console.error('Trace logging failed for get_subtask_full_context error:', traceErr);
+        }
       }
 
       // Preserve existing behavior for callers (ToolRunner/OrionAgent)
       throw error;
     }
 
-    // Log tool_result event with a compact summary of the outcome
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: 'tool_result',
-        source: 'tool',
-        timestamp: new Date().toISOString(),
-        summary: 'DatabaseTool_get_subtask_full_context result',
-        details: {
-          ok: !!(result && result.ok),
-          hasSubtask: !!(result && result.subtask),
-          // Keep full result for debugging; frontend can pretty-print or collapse
-          result,
-        },
-        requestId: context?.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for get_subtask_full_context result:', err);
+    // Log tool_result event
+    if (shouldTrace) {
+      try {
+        await TraceService.logEvent({
+          projectId,
+          type: 'tool_result',
+          source: 'tool',
+          timestamp: new Date().toISOString(),
+          summary: 'DatabaseTool_get_subtask_full_context result',
+          details: {
+            ok: !!(result && result.ok),
+            hasSubtask: !!(result && result.subtask),
+            result,
+          },
+          requestId: context?.requestId,
+        });
+      } catch (err) {
+        console.error('Trace logging failed for get_subtask_full_context result:', err);
+      }
     }
 
     return result;
@@ -173,19 +181,23 @@ const DatabaseToolAgentAdapter = {
       projectId = context.projectId.trim();
     }
 
+    const shouldTrace = !context?.__trace_from_toolrunner;
+
     // Log tool_call event
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: 'tool_call',
-        source: 'tool',
-        timestamp: new Date().toISOString(),
-        summary: 'DatabaseTool_create_subtask call',
-        details: { taskId, title },
-        requestId: context?.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for create_subtask call:', err);
+    if (shouldTrace) {
+      try {
+        await TraceService.logEvent({
+          projectId,
+          type: 'tool_call',
+          source: 'tool',
+          timestamp: new Date().toISOString(),
+          summary: 'DatabaseTool_create_subtask call',
+          details: { taskId, title },
+          requestId: context?.requestId,
+        });
+      } catch (err) {
+        console.error('Trace logging failed for create_subtask call:', err);
+      }
     }
 
     const targetFn = originalCreateSubtask || DatabaseTool.create_subtask;
@@ -209,18 +221,20 @@ const DatabaseToolAgentAdapter = {
     );
 
     // Log tool_result event
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: 'tool_result',
-        source: 'tool',
-        timestamp: new Date().toISOString(),
-        summary: 'DatabaseTool_create_subtask result',
-        details: { result },
-        requestId: context?.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for create_subtask result:', err);
+    if (shouldTrace) {
+      try {
+        await TraceService.logEvent({
+          projectId,
+          type: 'tool_result',
+          source: 'tool',
+          timestamp: new Date().toISOString(),
+          summary: 'DatabaseTool_create_subtask result',
+          details: { result },
+          requestId: context?.requestId,
+        });
+      } catch (err) {
+        console.error('Trace logging failed for create_subtask result:', err);
+      }
     }
 
     return result;

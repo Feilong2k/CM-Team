@@ -1,4 +1,4 @@
-const { executeToolCall, executeToolCalls } = require('../../tools/ToolRunner');
+const { executeToolCall, executeToolCalls, buildCanonicalSignature, getRequestTracker } = require('../../tools/ToolRunner');
 
 /**
  * Abstract base class for AI agents.

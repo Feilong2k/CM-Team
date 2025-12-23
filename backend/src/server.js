@@ -5,6 +5,7 @@ const chatMessagesRouter = require('./routes/chatMessages');
 const featuresRouter = require('./routes/features');
 const traceRouter = require('./routes/trace');
 const { isTraceEnabled } = require('./services/trace/TraceConfig');
+const { getSoftStopWindowMs } = require('../tools/ToolRunner');
 
 const app = express();
 
@@ -42,11 +43,18 @@ if (isTraceEnabled()) {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.status(200).json({ ok: true });
+  res.status(200).json({
+    ok: true,
+    serverVersion: process.env.SERVER_VERSION || null,
+    orionModelProvider: process.env.ORION_MODEL_PROVIDER || null,
+    toolSoftStopWindowMs: getSoftStopWindowMs(),
+  });
 });
 
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
+  console.log(`Server version: ${process.env.SERVER_VERSION || '(not set)'}`);
+  console.log(`ORION_MODEL_PROVIDER: ${process.env.ORION_MODEL_PROVIDER || '(not set)'}`);
 });
 
 module.exports = app;

@@ -69,7 +69,7 @@
         </svg>
       </button>
     </div>
-    <!-- Message input -->
+    <!-- Message input + mode/two-stage toggles -->
     <div class="p-4 border-t border-[#333333] flex items-center gap-4">
       <!-- Plan/Act Toggle -->
       <div class="flex items-center bg-gray-800 rounded p-1">
@@ -92,6 +92,19 @@
           ACT
         </button>
       </div>
+
+      <!-- Two-stage toggle -->
+      <div class="flex items-center bg-gray-800 rounded p-1 text-xs text-gray-400">
+        <label class="flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            v-model="uiStore.twoStageEnabled"
+            class="mr-1 accent-neon-blue"
+          />
+          2-stage
+        </label>
+      </div>
+
       <div class="flex-1">
         <MessageInput 
           @send="handleSendMessage" 
@@ -232,7 +245,6 @@ const loadOlderMessages = async () => {
     })).reverse()
     
     // Deduplicate: filter out any older messages that are already in the array
-    // (based on ID) to prevent double-display if offset/limit overlaps
     const existingIds = new Set(messages.value.map(m => m.id).filter(id => id !== undefined))
     const uniqueOlderMessages = olderMessages.filter(m => !existingIds.has(m.id))
 
@@ -241,7 +253,7 @@ const loadOlderMessages = async () => {
     const scrollTopBefore = container ? container.scrollTop : 0
     const scrollHeightBefore = container ? container.scrollHeight : 0
     
-    // Prepend older messages (they come in chronological order, newest first after reverse)
+    // Prepend older messages
     messages.value = [...uniqueOlderMessages, ...messages.value]
     
     currentOffset.value += data.length
@@ -254,7 +266,6 @@ const loadOlderMessages = async () => {
         const heightDifference = scrollHeightAfter - scrollHeightBefore
         container.scrollTop = scrollTopBefore + heightDifference
       }
-      // We rely on handleScroll to re-enable auto-scroll if user is at bottom
     })
   } catch (error) {
     console.error('Error loading older messages:', error)
@@ -287,7 +298,7 @@ const scrollToBottom = () => {
   scrollToBottomIndicator()
 }
 
-// Scroll to bottom and hide indicator (legacy function, use scrollToBottomAndHideIndicatorFn from composable)
+// Scroll to bottom and hide indicator
 const scrollToBottomAndHideIndicator = () => {
   scrollToBottomAndHideIndicatorFn()
 }
@@ -314,16 +325,13 @@ const handleSendMessage = async (messageText) => {
   // STEP 2: Scroll user message to top BEFORE adding AI message
   await nextTick()
   
-  // Find and scroll to the user message
   const userMessages = messagesContainer.value?.querySelectorAll('[data-testid="chat-msg-user"]')
   if (userMessages && userMessages.length > 0) {
     const lastUserMessage = userMessages[userMessages.length - 1]
-    
-    // Force immediate scroll to top
     lastUserMessage.scrollIntoView({ 
       block: 'start', 
       inline: 'nearest',
-      behavior: 'instant'  // Use 'instant' for immediate scroll without animation
+      behavior: 'instant'
     })
   }
 
@@ -335,17 +343,14 @@ const handleSendMessage = async (messageText) => {
     isStreaming: true
   })
   
-  // Get reference to the reactive message object
   const aiMessage = messages.value[messages.value.length - 1]
-  
-  // Update offset for AI message
   currentOffset.value += 1
 
-  // Use Vite dev-server proxy (`frontend/vite.config.js`) so we don't depend on CORS.
-  const endpoint = '/api/chat/messages'
+  // Choose endpoint based on two-stage toggle
+  const endpoint = uiStore.twoStageEnabled
+    ? '/api/chat/messages_two_stage'
+    : '/api/chat/messages'
   
-  // Unified payload for both modes
-  // Double-check: ensure messageText is not duplicated here.
   const payload = {
     external_id: projectId,
     sender: 'user',
@@ -356,7 +361,6 @@ const handleSendMessage = async (messageText) => {
   }
 
   try {
-    // Unified streaming call for both PLAN and ACT modes
     await streamOrionReply(endpoint, payload, {
       onChunk: (chunk) => {
         if (aiMessage) {
@@ -366,14 +370,9 @@ const handleSendMessage = async (messageText) => {
       },
       onDone: (fullContent) => {
         if (aiMessage) {
-          // Ensure content is consistent
-          // Note: fullContent from streamOrionReply is accumulated chunks
           aiMessage.content = fullContent 
           aiMessage.html = renderMarkdown(fullContent)
           aiMessage.isStreaming = false
-          // Note: we don't get the 'id' back from SSE stream directly unless we parse a specific event.
-          // For now, ID deduplication relies on refreshing or knowing that local ID is undefined.
-          // TODO: If we need the ID immediately, we should send it as a custom SSE event.
         }
       },
       onError: (errorMsg) => {

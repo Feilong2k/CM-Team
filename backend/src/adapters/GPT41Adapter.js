@@ -24,8 +24,8 @@ class GPT41Adapter extends LLMAdapter {
 
     const {
       apiKey,
-      model = 'gpt-4.1',
-      baseURL = 'https://api.openai.com/v1',
+      model = "gpt-4o-mini",
+      baseURL = "https://api.openai.com/v1",
       timeout = 30000,
       maxRetries = 3,
     } = config;

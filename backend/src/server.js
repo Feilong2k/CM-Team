@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const chatMessagesRouter = require('./routes/chatMessages');
+const createChatMessagesRouter = require('./routes/chatMessages');
 const featuresRouter = require('./routes/features');
 const traceRouter = require('./routes/trace');
 const { isTraceEnabled } = require('./services/trace/TraceConfig');
@@ -33,6 +33,7 @@ app.use(helmet());
 app.use(express.json());
 
 // Register chatMessages and features routes
+const chatMessagesRouter = createChatMessagesRouter();
 app.use('/api/chat', chatMessagesRouter);
 app.use('/api/features', featuresRouter);
 
@@ -51,10 +52,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-  console.log(`Server version: ${process.env.SERVER_VERSION || '(not set)'}`);
-  console.log(`ORION_MODEL_PROVIDER: ${process.env.ORION_MODEL_PROVIDER || '(not set)'}`);
-});
+// Only start the server if this file is being run directly (not imported)
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+    console.log(`Server version: ${process.env.SERVER_VERSION || '(not set)'}`);
+    console.log(`ORION_MODEL_PROVIDER: ${process.env.ORION_MODEL_PROVIDER || '(not set)'}`);
+  });
+}
 
 module.exports = app;

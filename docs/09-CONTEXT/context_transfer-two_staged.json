@@ -1,0 +1,245 @@
+{
+"meta": {
+"title": "Context Transfer — Two-Stage / Triggered-Phase Prototype",
+"asOf": "2025-12-23T07:51:45-05:00",
+"scope": "Backend two-stage protocol + frontend toggle + known gaps",
+"suggestedFilename": "docs/context_transfer_two_stage_protocol_v2.json"
+},
+"currentState": {
+"backend": {
+"twoStageRoute": {
+"path": "/api/chat/messages_two_stage",
+"file": "backend/src/routes/chatMessages.js",
+"status": "implemented",
+"gating": {
+"envVar": "TWO_STAGE_ENABLED",
+"disabledStatus": 501,
+"enabledStatus": 200,
+"protocolTag": "two_stage"
+}
+},
+"twoStageOrchestrator": {
+"file": "backend/src/services/TwoStageOrchestrator.js",
+"status": "implemented",
+"keyBehaviors": {
+"phases": "Alternating action/tool phases per request (A/B cycling)",
+"budgets": {
+"MAX_TOOLS_PER_TOOL_PHASE": 1,
+"MAX_PHASE_CYCLES_PER_TURN": 3,
+"MAX_DUPLICATE_ATTEMPTS_PER_TURN": 3
+},
+"duplicateHandling": {
+"mechanism": "canonical signature via buildCanonicalSignature + per-turn blockedSignatures set",
+"refusal": "injects system messages for duplicates and eventually "Maximum duplicate tool call attempts exceeded""
+},
+"toolCallMerging": "Merges streaming tool_call deltas into a map; filters out internal index_to_id before executing tools",
+"phaseMetadata": "Adds { phase, phaseIndex, cycleIndex } on every SSE event (handled server-side, currently ignored by frontend)",
+"toolResults": {
+"injection": "Tool results boxed as system messages for the model",
+"debugFlag": "TWO_STAGE_DEBUG controls whether tool result boxes are also streamed to UI"
+},
+"persistence": "Returns { finalContent } to route; route uses StreamingService.persistStreamedMessage once per turn when finalContent exists"
+}
+},
+"serverWiring": {
+"serverFile": "backend/src/server.js",
+"chatRouterFactory": "backend/src/routes/chatMessages.js exports createChatMessagesRouter; server.js calls it to get router",
+"jestOpenHandleFix": "app.listen wrapped in if (require.main === module)"
+},
+"tests": {
+"twoStageSuite": {
+"file": "backend/src/test/two_stage_protocol.spec.js",
+"status": "10/10 passing locally",
+"coverage": [
+"route gating (TWO_STAGE_ENABLED false→501, true→200 SSE)",
+"single tool per phase",
+"A/B cycling for list_files→read_file→final answer (via mocks)",
+"duplicate handling (signature-based block)",
+"cycle budget (3 tools per turn)",
+"phase metadata present in SSE events",
+"exactly one done per user turn",
+"single persistence at end"
+],
+"limitations": [
+"Tests currently operate via mocked adapter/StreamingService; they don’t exercise full DeepSeek/OpenAI behavior",
+"S23-T4 (duplicate) and related tests don’t assert post-duplicate termination semantics strongly enough"
+]
+}
+}
+},
+"frontend": {
+"chatPanel": {
+"file": "frontend/src/components/ChatPanel.vue",
+"status": "updated",
+"behavior": {
+"historyLoad": "GET /api/chat/messages?project_id=P1&limit=... via Vite proxy",
+"streaming": "POST to endpoint with Accept: text/event-stream using streamOrionReply.js",
+"modeToggle": "PLAN/ACT stored in Pinia uiStore.chatMode",
+"twoStageToggle": {
+"storeState": "uiStore.twoStageEnabled (persisted to localStorage)",
+"ui": "checkbox labeled '2-stage' next to PLAN/ACT toggle",
+"routing": "if twoStageEnabled → '/api/chat/messages_two_stage', else '/api/chat/messages'"
+},
+"SSEClient": {
+"file": "frontend/src/utils/streamOrionReply.js",
+"parsing": "Treats SSE 'data: ...' as JSON with {chunk, error, done, fullContent}; ignores extra fields like phase/phaseIndex/cycleIndex, so they are backend-only for now"
+}
+},
+"tests": {
+"file": "frontend/src/tests/ChatPanel.streaming.spec.js",
+"status": "targeting unified streaming endpoint '/api/chat/messages'; not yet two-stage aware"
+}
+},
+"uiStore": {
+"file": "frontend/src/stores/uiStore.js",
+"state": ["chatMode", "draftMessage", "traceVisible", "twoStageEnabled"],
+"persistence": "localStorage keys: orion_chat_mode, orion_draft_message, orion_trace_visible, orion_two_stage_enabled"
+}
+},
+"observedRuntimeBehavior": {
+"happyPathExample": {
+"prompt": "can you list the frontend?",
+"route": "/api/chat/messages_two_stage",
+"mode": "plan",
+"toolCalls": [
+"FileSystemTool.list_files(path='.', recursive=true)",
+"FileSystemTool.list_files(path='frontend', recursive=true)"
+],
+"outcome": "Clean summary of frontend structure; no duplicates, no budget issues",
+"traceEvidence": "See orion_response with protocol='two_stage' summarizing frontend tree"
+},
+"duplicateScenario": {
+"prompt": "list the root, then list the root again, and then tell me what you see",
+"route": "/api/chat/messages_two_stage",
+"mode": "act or plan (you tested both variants)",
+"behavior": {
+"duplicates": "Second+ identical list_files calls are blocked at ToolRunner level (duplicate_tool_call, DUPLICATE_BLOCKED)",
+"systemNotices": [
+"Duplicate tool call detected (already executed in this turn). Do NOT call this tool again. Use previous results.",
+"Maximum duplicate tool call attempts exceeded. Provide final answer without further tool calls."
+],
+"loop": "Despite the 'maximum duplicates' notice, the orchestrator re-enters Action phase multiple times; the model keeps repeating variations of 'I'll list the root directory...' plus system notices. No single, clean final answer is forced."
+},
+"rootCauseSummary": "In orchestrate(), the duplicateExceeded branch injects a notice and 'continue's the while loop without setting doneEmitted or forcing a final Action-only adapter call. cycleIndex remains below MAX_PHASE_CYCLES_PER_TURN, so the loop doesn’t exit."
+},
+"contextBehavior": {
+"withinTurn": "Two-stage orchestrator maintains a messages array with system prompt, user message, tool result boxes, and system notices; model sees these within the turn.",
+"acrossTurns": "New two-stage requests only seed messages with the two-stage system prompt + current user message. Prior chat history from chat_messages is not currently hydrated into messages, which is why Orion sometimes honestly says 'I don’t have context' about older discussion."
+}
+}
+},
+"remainingGaps": {
+"duplicateTermination": {
+"description": "After MAX_DUPLICATE_ATTEMPTS_PER_TURN, orchestrator does not guarantee a single final Action-only pass and termination; it can loop with repeated 'maximum duplicate' notices.",
+"impact": "User sees repeated system notices and 'I will list...' phrases without a decisive, single final answer.",
+"owner": "Devon (implementation) + Tara (tests)",
+"status": "known-issue; not yet fixed in code",
+"links": [
+"backend/src/services/TwoStageOrchestrator.js (duplicateExceeded branch in orchestrate)",
+"backend/src/test/two_stage_protocol.spec.js (S23-T4)"
+]
+},
+"contextHydrationAcrossTurns": {
+"description": "Two-stage mode does not yet reconstruct prior conversation history into the messages array for a new turn.",
+"desiredBehavior": "Each new /messages_two_stage request should behave like a new chat turn that includes a window of prior user + Orion messages, plus key system/tool context.",
+"impact": "Orion may say it lacks context about earlier discussion or documents, even though chat history exists in DB.",
+"owner": "Adam (design), Devon (impl)",
+"status": "design-only; not implemented",
+"relatedDocs": [
+"docs/analysis/two_stage_protocol/PCC_two_stage_protocol_plan_vFinal.md",
+"docs/analysis/two_stage_protocol/RED_two_stage_protocol_plan_vFinal_EXPANDED.md"
+]
+},
+"budgetStrategy": {
+"description": "MAX_PHASE_CYCLES_PER_TURN is currently a hard-coded small integer (3). This is a coarse safeguard and may be too limiting for real workflows.",
+"questionFromUser": "Is there a better way to safeguard than picking a random maximum?",
+"currentBehavior": "After 3 tool executions, orchestrator forces a final answer via a final adapter call (budget-exhausted path).",
+"potentialImprovements": {
+"configurableBudgets": "Expose MAX_PHASE_CYCLES_PER_TURN as env-configurable or per-project setting instead of a hard constant.",
+"progressSensitiveStop": "Track semantic progress (e.g., distinct tools, non-identical arguments, or trace of changed project state) and stop when there is no new progress for N cycles, rather than after a fixed count.",
+"timeOrTokenBudget": "Consider time-based (wall clock) or token-based ceilings instead of or in addition to cycle count.",
+"userConfirm": "After a certain number of cycles, require explicit user confirmation (or higher-level policy approval) to continue tools in that turn."
+},
+"owner": "Adam (new RED v2 design); Devon later",
+"status": "open design decision"
+},
+"traceAndRedaction": {
+"description": "redactDetails() in chatMessages route is still effectively a stub; two-stage route logs more structured content, including raw messages and tool results.",
+"risk": "Sensitive content may be logged verbatim into trace events.",
+"owner": "Adam (design), Devon (impl)",
+"status": "flagged in ODG/OSRG docs but not implemented",
+"relatedDocs": [
+".Docs/Protocols/Observability_Debuggability_Gate.md",
+".Docs/Protocols/Operational_Safety_Rollback_Gate.md",
+"docs/DEV_TRACE_EVENT_MODEL.md"
+]
+},
+"frontendPhaseAwareness": {
+"description": "Frontend currently ignores phase/phaseIndex/cycleIndex fields in SSE events; UI has no explicit phase display or A/B visualization.",
+"impact": "Harder to see A/B cycle boundaries in the Chat UI; trace shows them implicitly via events but not phases.",
+"status": "intentionally deferred; not a blocker for prototype",
+"owner": "Adam/UX later",
+"notes": "Phase metadata is present on SSE events from TwoStageOrchestrator; streamOrionReply.js just ignores extra fields."
+}
+},
+"nextSteps": {
+"forAdam": [
+{
+"id": "RED-V2-1",
+"title": "Write implementation-focused RED v2 for two-stage protocol",
+"description": "Create a new RED analysis doc that starts from the current implementation (TwoStageOrchestrator + /messages_two_stage + UI toggle) and explicitly details gaps: duplicate termination, context hydration, budget strategy, trace/redaction, and frontend phase UX.",
+"suggestedOutput": "docs/analysis/two_stage_protocol/RED_two_stage_protocol_plan_v2_implementation.md"
+},
+{
+"id": "CTX-1",
+"title": "Design cross-turn context hydration",
+"description": "Specify how many past messages to load from chat_messages, how to summarize long histories, and how to combine global Orion prompt + two-stage prompt + history + current message into the messages array for the first Action phase."
+},
+{
+"id": "BUDGET-1",
+"title": "Refine budget/guardrail strategy",
+"description": "Move beyond fixed 3-cycle limit: define configuration options + progress-sensitive or time-based limits suitable for non-toy workflows."
+}
+],
+"forTara": [
+{
+"id": "TEST-1",
+"title": "Strengthen S23-T4 duplicate handling tests",
+"description": "Update backend/src/test/two_stage_protocol.spec.js so that once duplicateExceeded is hit, the orchestrator is required to perform at most one more Action-only adapter call and then emit a single done event (no further tool calls or endless loops)."
+},
+{
+"id": "TEST-2",
+"title": "Add tests for context hydration (once designed)",
+"description": "After Adam defines CTX-1, add tests to assert that a new /messages_two_stage turn includes a window of previous chat history in messages before the first Action phase."
+}
+],
+"forDevon": [
+{
+"id": "IMPL-1",
+"title": "Implement duplicateExceeded termination semantics",
+"description": "Change TwoStageOrchestrator.orchestrate so that when toolPhaseResult.duplicateExceeded is true, the loop does not simply continue. Either set cycleIndex to the max and reuse the budget-exhausted path (one final Action call + done), or immediately run a final Action-only adapter call with an instruction to answer without tools, then set doneEmitted and exit."
+},
+{
+"id": "IMPL-2",
+"title": "Implement context hydration per CTX-1",
+"description": "Load an appropriate slice of chat history from chat_messages for external_id, convert it into messages (role/content), and seed TwoStageOrchestrator state.messages before the first Action phase."
+},
+{
+"id": "IMPL-3",
+"title": "Make cycle budget configurable",
+"description": "Replace hard-coded MAX_PHASE_CYCLES_PER_TURN=3 with a config-driven value (env var or per-project), and plumb that into TwoStageOrchestrator. Keep tests using a known small value (e.g., 3) for determinism."
+},
+{
+"id": "IMPL-4",
+"title": "Implement redactDetails according to DEV_TRACE_EVENT_MODEL",
+"description": "Update redactDetails in chatMessages route so trace events for two-stage protocol respect the established redaction rules (no raw secrets / sensitive payloads)."
+}
+],
+"forOrionOps": [
+{
+"id": "OPS-1",
+"title": "Rollout plan for two-stage mode",
+"description": "Keep TWO_STAGE_ENABLED=false by default. Enable it only for selected projects (like P1) while monitoring trace events for loops, duplicates, and budget hits. Maintain an easy rollback path by flipping the env flag and/or routing UI back to /api/chat/messages."
+}
+]
+}

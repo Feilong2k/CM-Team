@@ -1,0 +1,78 @@
+[
+  {
+    "task_id": "2-1",
+    "external_id": "P1-F2-T1-S23",
+    "title": "G3 — Two-stage/Triggered-Phase Prototype (Backend): /api/chat/messages_two_stage (flagged)",
+    "status": "pending",
+    "workflow_stage": "orion_planning",
+    "basic_info": {
+      "goal": "Build a minimal prototype of the Triggered-Phase (A/B cycling) protocol behind a feature flag, to validate DeepSeek tool-call looping is controllable and that chained tools work within strict budgets.",
+      "area": "Orion Orchestration / Streaming",
+      "notes": [
+        "This is a prototype spike. If validated, we will run RED to produce the full hardened implementation plan.",
+        "Must keep existing /api/chat/messages unchanged as fallback.",
+        "Must not leak secrets in trace; redaction is currently weak (OSRG flagged)."
+      ]
+    },
+    "instruction": {
+      "overview": "Implement a new opt-in streaming route that runs the triggered-phase orchestration loop (A/B repeated). Execute at most one tool per tool-phase, allow non-duplicate tool calls to trigger additional cycles, and enforce cycle/duplicate budgets.",
+      "technical_details": {
+        "requirements": [
+          "Add new route: POST /api/chat/messages_two_stage (SSE), gated by env var TWO_STAGE_ENABLED (default false).",
+          "Protocol: A/B cycling phases in one SSE connection: A=tool execution (max 1), B=reasoning. If B emits a new non-duplicate tool call, start next A.",
+          "Hard budgets: MAX_TOOLS_PER_TOOL_PHASE=1; MAX_PHASE_CYCLES_PER_TURN=3; MAX_DUPLICATE_ATTEMPTS_PER_TURN=3 (configurable).",
+          "Duplicate semantics in Action Phase (B): do not execute; inject a refusal as role=system message; continue reasoning.",
+          "Tool-call merging: reuse/port OrionAgent mergeToolCallsIntoMap logic; execute only when function.name exists and function.arguments is JSON-parseable.",
+          "Preserve persistence semantics: emit exactly one done event per user turn; persist final content once.",
+          "Trace: reuse existing tool_call/tool_result logging; optionally add phase start/end events but NOTE TraceEvent TRACE_TYPES currently does not include them (needs decision).",
+          "UI: do NOT stream raw tool results into chat UI by default; rely on trace + model injection. (OK if UI ignores extra fields.)"
+        ],
+        "implementation_touchpoints": [
+          "backend/src/routes/chatMessages.js: add new route handler (or new router file) for /messages_two_stage.",
+          "backend/src/services/: add a TwoStageOrchestrator module (recommended) instead of modifying OrionAgent.processStreaming directly.",
+          "backend/tools/ToolRunner.js: reuse existing signature builder (do not rewrite).",
+          "backend/src/services/trace/TraceEvent.js: may need to add new trace types if we introduce orchestration_phase_start/end.",
+          "frontend/src/components/ChatPanel.vue: later (optional) add endpoint toggle; prototype can be called manually via curl/postman first."
+        ]
+      },
+      "acceptance_criteria": [
+        "When TWO_STAGE_ENABLED=false, /api/chat/messages_two_stage returns 404/501 and does not impact existing /messages route.",
+        "When enabled, a single user turn can execute a chain like list_files → read_file (two cycles) and then produce a final answer.",
+        "If the model repeats the same tool call signature in B, it is not executed and a refusal system message is injected.",
+        "Cycle budget stops infinite loops (max 3 tool executions per turn) and forces final answer.",
+        "Tool-call args must be JSON-parseable before execution; malformed tool calls do not crash the server.",
+        "Exactly one persisted orion message per turn (no partial overwrites)."
+      ],
+      "edge_cases": [
+        "DeepSeek streams tool_call arguments in fragments; ensure merge logic produces valid JSON before execution.",
+        "If tool execution fails (non-duplicate), ensure it consumes a cycle and B receives an error system message to proceed.",
+        "Ensure the SSE stream does not emit done prematurely (StreamingService currently delays done; maintain this behavior).",
+        "Trace redaction: redactDetails in chatMessages route currently returns details verbatim; may leak sensitive content unless addressed."
+      ],
+      "tara": {
+        "goal": "Add RED/green tests that validate the triggered-phase orchestration loop is deterministic and prevents tool spam.",
+        "tests": [
+          "Add backend tests for /api/chat/messages_two_stage behind TWO_STAGE_ENABLED (disabled returns 404/501).",
+          "Simulate an adapter stream that emits: chunk(s) → tool_call (partial deltas) → tool_result injection → next phase → final done.",
+          "Assert: only one tool executes per tool-phase; max 3 cycles; duplicate tool calls are ignored and refusal system message is injected.",
+          "Assert: only one done event and persistence called once.",
+          "Add a test proving existing /api/chat/messages behavior is unchanged (regression guard)."
+        ]
+      },
+      "devon": {
+        "goal": "Implement the prototype route + orchestrator loop with strict budgets and correct tool-call merging, without breaking existing streaming.",
+        "steps": [
+          "Implement /api/chat/messages_two_stage route behind TWO_STAGE_ENABLED.",
+          "Create TwoStageOrchestrator module to manage A/B cycles and budgets.",
+          "Port/Reuse mergeToolCallsIntoMap logic from OrionAgent to merge partial tool_calls.",
+          "Integrate ToolRunner for tool execution and signature computation.",
+          "Inject refusal as system message for duplicates in B.",
+          "Ensure single done event and persistence happens once.",
+          "Add trace markers as feasible; if adding new trace event types, update TRACE_TYPES.",
+          "Document how to enable/disable quickly (OSRG runbook stub)."
+        ]
+      }
+    },
+    "reason": "Validate two-stage/triggered-phase protocol feasibility with real DeepSeek streaming behavior before investing in full hardening plan." 
+  }
+]

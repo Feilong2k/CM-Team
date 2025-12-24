@@ -1,0 +1,238 @@
+# CDP Analysis: Subtask P1-F2-T1-S23 — Two-stage/Triggered-Phase Prototype (Backend)
+# Analyst: Tara
+# Date: 2025-12-22
+# Status: RED Phase — Failing Tests Required
+
+## 1. Requirements Analysis
+
+### A. New Route with Feature Flag
+- **Requirement**: `POST /api/chat/messages_two_stage` gated by `TWO_STAGE_ENABLED` env var
+- **Current State**: No such route exists
+- **Missing**: Route implementation, feature flag check
+- **Risk**: Route may be accessible when disabled or missing when enabled
+
+### B. Triggered Phases Orchestration
+- **Requirement**: Action(B) streams; first non-duplicate tool call triggers Tool(A); repeat
+- **Current State**: Unified streaming route executes tools immediately
+- **Missing**: Phase detection, tool execution control, cycle management
+- **Risk**: Infinite loops if cycle budgets not enforced
+
+### C. Tool Execution Limits
+- **Requirement**: `MAX_TOOLS_PER_TOOL_PHASE=1` (execute only first tool call per phase)
+- **Current State**: ToolRunner executes all tool calls
+- **Missing**: Tool phase detection and single-tool execution
+- **Risk**: Multiple tools executed in same phase
+
+### D. Cycle Budget Enforcement
+- **Requirement**: `MAX_PHASE_CYCLES_PER_TURN=3` (max 3 tool executions per user turn)
+- **Current State**: No cycle budget enforcement
+- **Missing**: Cycle counting and budget enforcement
+- **Risk**: Infinite tool chaining
+
+### E. Duplicate Handling in Action Phase
+- **Requirement**: Duplicate tool calls ignored, inject refusal as system message
+- **Current State**: ToolRunner has soft-stop but not system message injection
+- **Missing**: Duplicate detection in action phase, system message injection
+- **Risk**: Duplicate tools may still execute or cause confusion
+
+### F. Single Done Event Per Turn
+- **Requirement**: Emit exactly one done event per user turn and persist once
+- **Current State**: Unified streaming already does this
+- **Missing**: Integration with new orchestration loop
+- **Risk**: Multiple done events or missing persistence
+
+### G. SSE Phase Metadata
+- **Requirement**: Include `phase`, `phaseIndex`, `cycleIndex` in SSE events
+- **Current State**: No phase metadata
+- **Missing**: Phase tracking and metadata injection
+- **Risk**: Frontend cannot track phase transitions
+
+## 2. Atomic Actions
+
+### A. Route Gating
+- **Behavior**: Route returns 404/501 when `TWO_STAGE_ENABLED=false`
+- **Observable Outcome**: HTTP error response
+- **Test Seam**: Environment variable control, route response
+
+### B. Tool Phase Execution
+- **Behavior**: Execute only first tool call when multiple appear in same phase
+- **Observable Outcome**: Single tool execution, others ignored
+- **Test Seam**: Tool execution spy, SSE output
+
+### C. A/B Cycling
+- **Behavior**: `list_files → read_file → final answer` with proper cycling
+- **Observable Outcome**: 2 tool executions, final answer, single persistence
+- **Test Seam**: Tool execution counts, SSE sequence, persistence call
+
+### D. Duplicate Handling
+- **Behavior**: Duplicate in action phase ignored, system message injected
+- **Observable Outcome**: Single tool execution, system message in next phase input
+- **Test Seam**: Tool execution count, adapter input messages
+
+### E. Cycle Budget Enforcement
+- **Behavior**: Force final answer after 3 tool executions (MAX_PHASE_CYCLES_PER_TURN)
+- **Observable Outcome**: 3 tool executions, no 4th execution, final answer
+- **Test Seam**: Tool execution count, SSE final answer
+
+### F. Phase Metadata
+- **Behavior**: SSE events include phase metadata
+- **Observable Outcome**: `phase`, `phaseIndex`, `cycleIndex` in SSE events
+- **Test Seam**: SSE event parsing
+
+## 3. Resources Touched
+
+### A. Environment Variables
+- **Resource Type**: System configuration
+- **Access Pattern**: READ (feature flag)
+- **Isolation Risks**: Test pollution across tests
+- **Mitigation**: Mock environment variables per test
+
+### B. LLM Adapter
+- **Resource Type**: External API or mock
+- **Access Pattern**: READ/WRITE (streaming, tool calls)
+- **Isolation Risks**: Real API calls in tests
+- **Mitigation**: FakeStreamingAdapter mock
+
+### C. ToolRunner
+- **Resource Type**: Tool execution engine
+- **Access Pattern**: READ/WRITE (tool execution, state)
+- **Isolation Risks**: State pollution across tests
+- **Mitigation**: Reset ToolRunner state between tests
+
+### D. Database
+- **Resource Type**: Persistence layer
+- **Access Pattern**: WRITE (message persistence)
+- **Isolation Risks**: Test data pollution
+- **Mitigation**: Mock persistence or test DB cleanup
+
+### E. SSE Connection
+- **Resource Type**: HTTP streaming connection
+- **Access Pattern**: WRITE (event streaming)
+- **Isolation Risks**: Connection management
+- **Mitigation**: Supertest for route testing
+
+## 4. System Physics
+
+### A. Streaming Fragmentation
+- **Physical Limits**: DeepSeek streaming tool_call deltas may arrive fragmented
+- **Failure Modes**: Incomplete tool call parsing
+- **Mitigations**: Robust delta accumulation and parsing
+
+### B. Frontend SSE Parser Compatibility
+- **Physical Limits**: Frontend expects chunk/error/done events
+- **Failure Modes**: Breaking existing frontend
+- **Mitigations**: Maintain SSE event format compatibility
+
+### C. Trace Event Types
+- **Physical Limits**: TRACE_TYPES may not include orchestration events
+- **Failure Modes**: Missing trace events for debugging
+- **Mitigations**: Add trace types or skip assertions
+
+### D. Concurrency and State
+- **Physical Limits**: Multiple concurrent requests
+- **Failure Modes**: State mixing between requests
+- **Mitigations**: Request-scoped state management
+
+## 5. Anti-Placeholder Analysis
+
+### 🚫 Invalid Test Patterns (Would Pass with Placeholder)
+1. **Route Gating**: Test that doesn't verify 404/501 when disabled
+2. **Tool Limit**: Test that allows multiple tools per phase
+3. **Cycle Budget**: Test that allows unlimited cycles
+4. **Duplicate Handling**: Test that executes duplicate tools
+5. **Phase Metadata**: Test that doesn't verify metadata in SSE
+
+### ✅ Valid Test Patterns (Fail with Placeholder)
+1. **Route Gating**: Test that expects 404/501 when `TWO_STAGE_ENABLED=false`
+2. **Tool Limit**: Test that verifies only first tool executes when multiple appear
+3. **A/B Cycling**: Test that verifies exactly 2 tool executions for list_files → read_file chain
+4. **Duplicate Handling**: Test that verifies single execution and system message injection
+5. **Cycle Budget**: Test that verifies only 3 tool executions with 4 tool calls
+6. **Phase Metadata**: Test that verifies `phase`, `phaseIndex`, `cycleIndex` in SSE events
+
+## 6. Test Seam Validation
+
+### ✅ Clear Seams Exist
+- **Route Layer**: Express route with environment check
+- **Adapter Interface**: Can mock streaming adapter
+- **ToolRunner**: Can spy on tool executions
+- **SSE Events**: Can parse and assert event content
+
+### 🚨 Potential Blockers
+1. **Adapter Injection**: Need to expose adapter injection for testing
+2. **Orchestrator Loop**: Need testable orchestrator component
+3. **Phase State Management**: Need to track phase/cycle state
+4. **System Message Injection**: Need to verify message injection into adapter input
+
+## 7. Security Analysis
+
+### A. Environment Variable Exposure
+- **Risk**: Feature flag may expose incomplete functionality
+- **Mitigation**: Default disabled, proper error responses
+- **Test Required**: YES (verify disabled route behavior)
+
+### B. Tool Execution Control
+- **Risk**: Bypassing tool limits could cause resource exhaustion
+- **Mitigation**: Hard limits in orchestration loop
+- **Test Required**: YES (verify budget enforcement)
+
+### C. State Isolation
+- **Risk**: Request state mixing between users
+- **Mitigation**: Request-scoped state
+- **Test Required**: YES (verify concurrent request isolation)
+
+## 8. Test Scenarios (Priority Order)
+
+### CRITICAL (Must Fail with Placeholder)
+1. **Route Gating**: Route returns 404/501 when `TWO_STAGE_ENABLED=false`
+2. **Single Tool Per Phase**: Execute only first tool when multiple appear
+3. **A/B Cycling**: Proper tool chaining with final answer
+4. **Duplicate Handling**: Ignore duplicate, inject system message
+5. **Cycle Budget**: Force final answer after 3 tool executions
+
+### HIGH (Essential Behavior)
+6. **Phase Metadata**: SSE events include phase metadata
+7. **Single Done Event**: Exactly one done event per turn
+8. **Single Persistence**: Message persisted once at end
+
+### MEDIUM (Integration)
+9. **Existing Route Unaffected**: `/api/chat/messages` still works
+10. **Tool Output Injection**: Tool results injected as system messages
+11. **Trace Events**: Orchestration events logged to trace
+
+## 9. Clarification Requests
+
+### RESOLVED
+1. **Protocol**: Triggered phases with A/B cycling
+2. **Budgets**: MAX_TOOLS_PER_TOOL_PHASE=1, MAX_PHASE_CYCLES_PER_TURN=3
+3. **Duplicate Handling**: Ignore + system message refusal
+
+### PENDING
+1. **System Message Format**: Exact format of refusal message
+2. **Phase Metadata Fields**: Complete list of SSE metadata fields
+3. **Error Responses**: Specific HTTP codes for disabled route
+
+## 10. Blocking Status
+
+### 🚨 POTENTIALLY BLOCKED
+- Need adapter injection seam for testing
+- Need orchestrator component separation for unit testing
+- Need clarification on system message format
+
+### ✅ UNBLOCKED FOR ROUTE TESTS
+- Can write route-level integration tests with mocks
+- Can test basic gating and error responses
+
+## 11. Next Steps
+
+1. Create `backend/src/_test_/two_stage_protocol.spec.js`
+2. Implement FakeStreamingAdapter mock
+3. Write failing tests for all critical scenarios
+4. Ensure tests fail with current implementation (no route exists)
+5. Document test failures for Devon
+
+---
+
+**CDP Analyst Signature**: Tara  
+**Date**: 2025-12-22  
+**Status**: READY FOR TEST IMPLEMENTATION WITH ADAPTER INJECTION CLARIFICATION

@@ -1,0 +1,101 @@
+# Tara CDP Analysis for Subtask P1-F3-T1-S3
+# Target: Implement StandardProtocol wrapper (legacy Orion "standard" behavior)
+# Source: Subtask instructions from docs/00-INBOX/Tara_P1-F3-T1-S3_StandardProtocol_tests_prompt.md
+# Reference Implementation: Existing OrionAgent standard behavior (no dedicated class)
+# Interface: backend/src/agents/protocols/ProtocolStrategy.js
+
+---
+## 1. Atomic Actions (from spec)
+- Create StandardProtocol class extending ProtocolStrategy in `backend/src/agents/protocols/StandardProtocol.js`
+- Constructor accepts { adapter, tools, traceService } and stores them
+- Implement getName() returning 'standard'
+- Implement canHandle() returning true (can handle all standard chat requests)
+- Implement async *executeStreaming(executionContext) that:
+  1. Calls adapter.sendMessagesStreaming **once per turn** (no A/B cycling)
+  2. Forwards chunks and toolCalls from adapter as ProtocolEvent (CHUNK, TOOL_CALLS)
+  3. Executes **all** tool calls received (no duplicate detection, no budget enforcement)
+  4. Emits exactly one DONE event at the end
+  5. Does **not** emit PHASE events (no two‑stage semantics)
+  6. Ignores config.maxPhaseCycles, config.maxDuplicateAttempts, config.debugShowToolResults
+  7. Propagates adapter errors as ERROR events (or throws)
+
+## 2. Resources Touched
+- **File System**:
+  - File creation: backend/src/agents/protocols/StandardProtocol.js
+  - Potential updates to OrionAgent to use StandardProtocol (post‑MVP)
+- **Dependencies**:
+  - LLMAdapter (via executionContext.adapter)
+  - ToolRunner (via executionContext.tools map)
+  - TraceService (via executionContext.traceService)
+- **Configuration**: executionContext.config (ignored)
+- **Network**: Adapter may make external API calls (outside scope of unit tests)
+- **Environment Variables**: None specific.
+
+## 3. System Physics
+- **Streaming Asynchronous Generators**: Must forward adapter events without extra buffering.
+- **Tool Execution**: ToolRunner.executeToolCalls is called once per batch of tool calls (as they appear in the stream).
+- **No State Management**: No per‑request state beyond the current generator; no duplicate detection, no cycle counting.
+- **Concurrency**: Multiple protocol instances may run concurrently; no shared state.
+- **Performance**: Single adapter call per turn; tool execution may be parallelized by ToolRunner.
+- **Error Handling**: Adapter errors should be surfaced as ERROR events (or cause the generator to throw). Tool execution errors are returned as tool results (success: false).
+
+## 4. Test Seams Validation
+- **StandardProtocol Class**: Can be instantiated with mocked dependencies.
+- **Adapter Streaming**: Mock adapter.sendMessagesStreaming to yield controlled events.
+- **ToolRunner**: Mock executeToolCalls to simulate tool execution results.
+- **TraceService**: Mock logEvent for observability.
+- **ProtocolExecutionContext**: Provides config and dependencies; can be constructed with mocks.
+- **ProtocolEventTypes**: Constants for event type validation.
+
+**Seam Status**: ✅ Acceptable. All dependencies can be mocked; the class can be tested in isolation.
+
+## 5. Anti-Placeholder Risks
+- **Risk 1**: StandardProtocol could implement executeStreaming with hardcoded generator that yields a DONE event without calling adapter.
+  - **Mitigation**: Tests must verify that adapter.sendMessagesStreaming is called exactly once with correct messages and context.
+- **Risk 2**: Tool execution could be omitted (ToolRunner not called).
+  - **Mitigation**: Tests must verify ToolRunner.executeToolCalls is called with all tool calls received.
+- **Risk 3**: StandardProtocol could inadvertently implement TwoStage behaviors (PHASE events, duplicate detection, budget enforcement).
+  - **Mitigation**: Tests must assert absence of PHASE events and system notices about budgets/duplicates.
+- **Risk 4**: Error handling could swallow errors, causing silent failures.
+  - **Mitigation**: Tests must verify errors are emitted as ERROR events (or cause the generator to throw).
+- **Risk 5**: Multiple tool calls could be incorrectly filtered (only first executed).
+  - **Mitigation**: Tests must verify that all tool calls in a batch are passed to ToolRunner.
+
+## 6. Security & Edge Cases
+- **Input Validation**: Should validate tool call structure? Legacy behavior may rely on ToolRunner validation.
+- **Tool Result Injection**: Tool results may contain sensitive data; ensure they are not logged inadvertently.
+- **Stream Cleanup**: Ensure async generator is properly closed on early termination.
+- **Concurrent Execution**: Ensure no cross‑request state leakage (none expected).
+- **Malformed Tool Calls**: Should be handled by ToolRunner (returns error result).
+
+## 7. Test Scenarios (Derived)
+### Unit Tests (mocked dependencies)
+1. **Constructor** - Sets dependencies correctly.
+2. **getName()** - Returns 'standard'.
+3. **canHandle()** - Always returns true.
+4. **executeStreaming – No tool calls** - Adapter yields chunk + done; verify single adapter call, no ToolRunner, correct events.
+5. **executeStreaming – Single tool call** - Adapter yields chunk, tool call, done; verify adapter call, ToolRunner called with that call, events include TOOL_CALLS and DONE.
+6. **executeStreaming – Multiple tool calls in one batch** - Adapter yields two tool calls; verify ToolRunner receives both, TOOL_CALLS event contains both.
+7. **executeStreaming – No TwoStage semantics** - Verify no PHASE events emitted.
+8. **executeStreaming – Ignores budget/duplicate config** - Provide config with extreme values; behavior unchanged.
+9. **executeStreaming – Adapter error propagation** - Mock adapter to throw; verify ERROR event or thrown error.
+10. **executeStreaming – Tool execution error** - ToolRunner returns success: false; verify no extra error events (tool result is injected as system message by adapter? Not required for unit test).
+11. **executeStreaming – Exactly one DONE event** - Ensure DONE appears exactly once in event stream.
+
+### Integration Test Patterns (future)
+- **OrionAgent integration**: OrionAgent can instantiate StandardProtocol and call executeStreaming.
+- **Route integration**: `/api/chat/messages` route uses StandardProtocol (replacing current inline logic).
+
+## 8. Clarification Needed
+- **Error Event Format**: Should error event include Error object or string? ProtocolEventTypes defines error: Error. Follow same pattern as TwoStageProtocol.
+- **Tool Call Merging**: Adapter may stream tool calls incrementally; does StandardProtocol need to merge partial calls? Likely yes, because adapter streaming already merges; but StandardProtocol should forward toolCalls events as they arrive (no merging). The existing OrionAgent streaming already merges; we can assume adapter yields complete tool calls.
+- **System Prompt**: StandardProtocol does not inject any system messages; relies on executionContext.messages as provided.
+- **Trace Hooks**: Should StandardProtocol call traceService.logEvent? Not required for MVP but could be added later.
+
+## 9. Blocking Status
+- **Unblocked**. Implementation is a straightforward wrapper; test seams are clear.
+- **Note**: Must ensure backward compatibility with existing OrionAgent behavior (tests should cover).
+
+---
+## Next Step: Write failing unit tests in `backend/src/_test_/standard_protocol_unit.spec.js`
+## Test Priority: Unit tests with mocking, covering all critical behaviors.

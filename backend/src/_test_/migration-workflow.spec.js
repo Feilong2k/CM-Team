@@ -117,7 +117,8 @@ describe('Migration Execution Workflow - Subtask 1-0-2', () => {
   describe('SSOT Update Validation', () => {
     test('SSOT should have migration execution workflow section', () => {
       // Arrange
-      const ssotPath = path.join(__dirname, '..', '..', '..', '.Docs', 'Roadmap', 'Feature1_Implementation_Requirements_v1.0.md');
+      // SSOT path updated to new docs structure
+      const ssotPath = path.join(__dirname, '..', '..', '..', 'docs', '11-ARCHIVE', 'Feature1_Implementation_Requirements_v1.0.md');
       
       // Skip if SSOT doesn't exist in expected location
       if (!fs.existsSync(ssotPath)) {

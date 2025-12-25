@@ -1,0 +1,460 @@
+[
+  {
+    "task_id": "3-0",
+    "external_id": "P1-F3-T0-S1",
+    "title": "F3.0.1: Create ProtocolStrategy interface design document",
+    "status": "pending",
+    "workflow_stage": "adam_architecting",
+    "basic_info": {
+      "goal": "Design ProtocolStrategy interface that defines the execute() method contract for all protocol implementations",
+      "area": "Protocol Design",
+      "notes": [
+        "Follows strategy pattern from GoF",
+        "Must be compatible with existing TwoStageOrchestrator and OrionAgent",
+        "Design must support dependency injection for shared services"
+      ]
+    },
+    "instruction": {
+      "overview": "Create design document specifying ProtocolStrategy interface with execute() method signature and lifecycle hooks",
+      "technical_details": {
+        "requirements": [
+          "Define interface with execute(context) method returning Promise<StreamingResult>",
+          "Specify required context structure (chat history, project ID, user message)",
+          "Define optional lifecycle hooks (preExecute, postExecute, error handling)",
+          "Document extension points for future protocols (StandardProtocol, TwoStageProtocol, ValidationProtocol, ImplementationProtocol)"
+        ],
+        "implementation_touchpoints": [
+          "Design document: docs/design/ProtocolStrategy_interface.md",
+          "Reference existing OrionAgent.execute() method signature"
+        ]
+      },
+      "acceptance_criteria": [
+        "Design document approved by team",
+        "Interface compatible with current OrionAgent.execute() signature",
+        "Clear extension points defined for future protocols"
+      ]
+    },
+    "reason": "Critical design foundation for protocol strategy pattern implementation"
+  },
+  {
+    "task_id": "3-0",
+    "external_id": "P1-F3-T0-S2",
+    "title": "F3.0.2: Design ContextService architecture and API",
+    "status": "pending",
+    "workflow_stage": "adam_architecting",
+    "basic_info": {
+      "goal": "Design reusable ContextService that centralizes context building, chat history loading, and file system access",
+      "area": "Service Architecture",
+      "notes": [
+        "Extract duplicated context building logic from OrionAgent and TwoStageOrchestrator",
+        "Must support multi-turn conversations with chat history",
+        "Must handle file system tool integration for context building"
+      ]
+    },
+    "instruction": {
+      "overview": "Design ContextService class with methods for building context from chat history, file system, and project state",
+      "technical_details": {
+        "requirements": [
+          "Define buildContext(projectId, chatHistory, userMessage) method",
+          "Specify context structure (system prompt, chat history, file content)",
+          "Design dependency injection for FileSystemTool and DatabaseTool",
+          "Define caching strategy for repeated file access"
+        ],
+        "implementation_touchpoints": [
+          "Design document: docs/design/ContextService_architecture.md",
+          "Reference OrionAgent._prepareRequest() method for existing logic",
+          "Coordinate with Task 3.2 implementation"
+        ]
+      },
+      "acceptance_criteria": [
+        "Design document approved",
+        "ContextService API supports all current OrionAgent context building needs",
+        "Dependency injection strategy defined"
+      ]
+    },
+    "reason": "Eliminate code duplication and enable shared context building across protocols"
+  },
+  {
+    "task_id": "3-0",
+    "external_id": "P1-F3-T0-S3",
+    "title": "F3.0.3: Define security redaction patterns per DEV_TRACE_EVENT_MODEL.md",
+    "status": "pending",
+    "workflow_stage": "adam_architecting",
+    "basic_info": {
+      "goal": "Define comprehensive security redaction patterns for sensitive data in trace logs",
+      "area": "Security",
+      "notes": [
+        "Required by DEV_TRACE_EVENT_MODEL.md",
+        "Must handle API keys, file paths, user credentials",
+        "Must balance security with debugging usefulness"
+      ]
+    },
+    "instruction": {
+      "overview": "Create security pattern specification for redactDetails() function in TraceService",
+      "technical_details": {
+        "requirements": [
+          "Define regex patterns for API keys (sk-.*, gsk-.*)",
+          "Specify path redaction patterns (remove user directories)",
+          "Define redaction levels (full, partial, none) based on environment",
+          "Create test data with sensitive patterns"
+        ],
+        "implementation_touchpoints": [
+          "Security pattern document: docs/security/redaction_patterns.md",
+          "TraceService.redactDetails() implementation",
+          "Test suite with sensitive data samples"
+        ]
+      },
+      "acceptance_criteria": [
+        "Security pattern document approved",
+        "Test data created for validation",
+        "Redaction patterns cover all known sensitive data types"
+      ]
+    },
+    "reason": "Security requirement identified in RED v3 analysis"
+  },
+  {
+    "task_id": "3-0",
+    "external_id": "P1-F3-T0-S4",
+    "title": "F3.0.4: Design phase trace event schema and integration approach",
+    "status": "pending",
+    "workflow_stage": "adam_architecting",
+    "basic_info": {
+      "goal": "Design trace event schema for two-stage protocol phases and integration with existing TraceService",
+      "area": "Observability",
+      "notes": [
+        "Extend current TRACE_TYPES with phase events",
+        "Must be backward compatible",
+        "Should support trace dashboard visualization"
+      ]
+    },
+    "instruction": {
+      "overview": "Design new trace event types for two-stage protocol phases (phase_start, phase_end, budget_exhausted, etc.)",
+      "technical_details": {
+        "requirements": [
+          "Define new TRACE_TYPES constants (phase_start, phase_end, cycle_complete, budget_exhausted)",
+          "Specify event data structure (phase_type, cycle_count, timestamp)",
+          "Design TraceEvent class extension for phase events",
+          "Plan integration with TwoStageProtocol.cyclePhase() method"
+        ],
+        "implementation_touchpoints": [
+          "Trace schema design: docs/design/phase_trace_events.md",
+          "TraceEvent.js TRACE_TYPES update",
+          "TraceService.log() integration"
+        ]
+      },
+      "acceptance_criteria": [
+        "Trace event schema design approved",
+        "Backward compatibility verified",
+        "Integration plan for TwoStageProtocol defined"
+      ]
+    },
+    "reason": "Observability requirement identified in RED v3 analysis"
+  },
+  {
+    "task_id": "3-0",
+    "external_id": "P1-F3-T0-S5",
+    "title": "F3.0.5: Document protocol strategy patterns and service extraction patterns",
+    "status": "pending",
+    "workflow_stage": "adam_architecting",
+    "basic_info": {
+      "goal": "Create knowledge transfer documentation for protocol strategy patterns and service extraction approaches",
+      "area": "Knowledge Transfer",
+      "notes": [
+        "Critical for team understanding",
+        "Should include examples and best practices",
+        "Will be referenced in future features"
+      ]
+    },
+    "instruction": {
+      "overview": "Create comprehensive documentation explaining protocol strategy pattern implementation and service extraction approach",
+      "technical_details": {
+        "requirements": [
+          "Create protocol pattern documentation with UML diagrams",
+          "Document service extraction approach with code examples",
+          "Include best practices and anti-patterns",
+          "Create developer onboarding guide for new team members"
+        ],
+        "implementation_touchpoints": [
+          "Protocol pattern docs: docs/knowledge/protocol_strategy_patterns.md",
+          "Service extraction docs: docs/knowledge/service_extraction_patterns.md",
+          "Examples in docs/examples/"
+        ]
+      },
+      "acceptance_criteria": [
+        "Documentation completed and reviewed",
+        "Examples are runnable/testable",
+        "Team can explain concepts after reading"
+      ]
+    },
+    "reason": "Knowledge gap identified in RED v3 analysis"
+  },
+  {
+    "task_id": "3-1",
+    "external_id": "P1-F3-T1-S1",
+    "title": "F3.1.1: Implement ProtocolStrategy.js from approved design",
+    "status": "pending",
+    "workflow_stage": "devon_implementing",
+    "basic_info": {
+      "goal": "Implement ProtocolStrategy interface class based on approved design document",
+      "area": "Protocol Implementation",
+      "notes": [
+        "Must follow exact design specification",
+        "Should be in backend/src/agents/protocols/ directory",
+        "Must export as ES module"
+      ]
+    },
+    "instruction": {
+      "overview": "Create ProtocolStrategy.js file with execute() method interface and lifecycle hooks",
+      "technical_details": {
+        "requirements": [
+          "Create class with execute(context) method",
+          "Implement optional preExecute() and postExecute() hooks",
+          "Add error handling with try/catch",
+          "Export class as default export"
+        ],
+        "implementation_touchpoints": [
+          "File: backend/src/agents/protocols/ProtocolStrategy.js",
+          "Reference: docs/design/ProtocolStrategy_interface.md",
+          "Integration: update import statements in dependent files"
+        ]
+      },
+      "acceptance_criteria": [
+        "ProtocolStrategy.js created with correct interface",
+        "Class can be extended by StandardProtocol and TwoStageProtocol",
+        "No TypeScript/ESLint errors"
+      ]
+    },
+    "reason": "Core implementation of protocol strategy pattern"
+  },
+  {
+    "task_id": "3-1",
+    "external_id": "P1-F3-T1-S2",
+    "title": "F3.1.2: Extract StandardProtocol from OrionAgent",
+    "status": "pending",
+    "workflow_stage": "devon_implementing",
+    "basic_info": {
+      "goal": "Extract standard protocol logic from OrionAgent into separate StandardProtocol class",
+      "area": "Code Refactoring",
+      "notes": [
+        "Extract existing OrionAgent.execute() logic",
+        "Maintain backward compatibility",
+        "Update OrionAgent to use StandardProtocol"
+      ]
+    },
+    "instruction": {
+      "overview": "Create StandardProtocol.js that implements ProtocolStrategy with current OrionAgent logic",
+      "technical_details": {
+        "requirements": [
+          "Extract OrionAgent.execute() method body to StandardProtocol.execute()",
+          "Update OrionAgent to instantiate and delegate to StandardProtocol",
+          "Ensure all tests pass after extraction",
+          "Remove duplicated logic from OrionAgent"
+        ],
+        "implementation_touchpoints": [
+          "File: backend/src/agents/protocols/StandardProtocol.js",
+          "OrionAgent.js refactoring",
+          "Test updates for protocol delegation"
+        ]
+      },
+      "acceptance_criteria": [
+        "StandardProtocol.js created with extracted logic",
+        "OrionAgent reduced by ~200 lines",
+        "All existing tests pass"
+      ]
+    },
+    "reason": "First step in extracting protocols from monolithic OrionAgent"
+  },
+  {
+    "task_id": "3-1",
+    "external_id": "P1-F3-T1-S3",
+    "title": "F3.1.3: Convert TwoStageOrchestrator to TwoStageProtocol",
+    "status": "pending",
+    "workflow_stage": "devon_implementing",
+    "basic_info": {
+      "goal": "Convert existing TwoStageOrchestrator prototype to proper TwoStageProtocol class",
+      "area": "Protocol Conversion",
+      "notes": [
+        "Maintain A/B cycling, duplicate detection, phase metadata",
+        "Inherit OrionAgent context hydration",
+        "Follow ProtocolStrategy interface"
+      ]
+    },
+    "instruction": {
+      "overview": "Refactor TwoStageOrchestrator.js to TwoStageProtocol.js implementing ProtocolStrategy",
+      "technical_details": {
+        "requirements": [
+          "Rename TwoStageOrchestrator.js to TwoStageProtocol.js",
+          "Update class to extend/implements ProtocolStrategy",
+          "Implement execute() method with A/B cycling",
+          "Integrate context building from OrionAgent"
+        ],
+        "implementation_touchpoints": [
+          "File: backend/src/agents/protocols/TwoStageProtocol.js",
+          "Route updates in chatMessages.js",
+          "Test updates for new class name"
+        ]
+      },
+      "acceptance_criteria": [
+        "TwoStageProtocol.js created with ProtocolStrategy compliance",
+        "All existing two-stage tests pass",
+        "Context building works for multi-turn conversations"
+      ]
+    },
+    "reason": "Convert prototype to production-ready protocol implementation"
+  },
+  {
+    "task_id": "3-1",
+    "external_id": "P1-F3-T1-S4",
+    "title": "F3.1.4: Refactor OrionAgent to use protocol strategies",
+    "status": "pending",
+    "workflow_stage": "devon_implementing",
+    "basic_info": {
+      "goal": "Update OrionAgent to delegate to protocol strategies (StandardProtocol or TwoStageProtocol)",
+      "area": "Orchestrator Refactoring",
+      "notes": [
+        "OrionAgent becomes coordinator rather than executor",
+        "Support protocol selection via configuration",
+        "Maintain backward compatibility for existing routes"
+      ]
+    },
+    "instruction": {
+      "overview": "Refactor OrionAgent to instantiate and delegate to protocol strategies based on configuration",
+      "technical_details": {
+        "requirements": [
+          "Update OrionAgent.execute() to delegate to selected protocol",
+          "Add protocol selection logic (env var or request parameter)",
+          "Ensure route /api/chat/messages uses StandardProtocol by default",
+          "Ensure route /api/chat/messages_two_stage uses TwoStageProtocol"
+        ],
+        "implementation_touchpoints": [
+          "OrionAgent.js major refactor",
+          "Route updates in chatMessages.js",
+          "Configuration updates (.env, config files)"
+        ]
+      },
+      "acceptance_criteria": [
+        "OrionAgent reduced to ~150 lines",
+        "Protocol selection works correctly",
+        "All existing API routes function as before"
+      ]
+    },
+    "reason": "Complete protocol strategy pattern implementation in OrionAgent"
+  },
+  {
+    "task_id": "3-1",
+    "external_id": "P1-F3-T1-S5",
+    "title": "F3.1.5: Wire two‑stage route and protocol selection in chatMessages.js",
+    "status": "pending",
+    "workflow_stage": "devon_implementing",
+    "basic_info": {
+      "goal": "Expose the two‑stage protocol via a dedicated route and enable runtime protocol selection",
+      "area": "Route Integration",
+      "notes": [
+        "Builds on the refactored OrionAgent from S4",
+        "Must preserve backward compatibility for existing /api/chat/messages",
+        "Two‑stage route should be gated by a feature flag"
+      ]
+    },
+    "instruction": {
+      "overview": "Update chatMessages.js to add a new route /api/chat/messages_two_stage that uses TwoStageProtocol, and optionally allow protocol selection via request parameters",
+      "technical_details": {
+        "requirements": [
+          "Add a new POST route /api/chat/messages_two_stage that instantiates TwoStageProtocol and passes it to OrionAgent",
+          "Keep the existing /api/chat/messages route using StandardProtocol (default behavior)",
+          "Optionally add a request parameter ?protocol=two_stage to /api/chat/messages for dynamic selection",
+          "Ensure all middleware and error handling remain consistent",
+          "Update any frontend calls that need to use the two‑stage endpoint"
+        ],
+        "implementation_touchpoints": [
+          "File: backend/src/routes/chatMessages.js",
+          "OrionAgent protocol injection from route parameters",
+          "Frontend API client updates (if required)",
+          "Update API documentation"
+        ]
+      },
+      "acceptance_criteria": [
+        "/api/chat/messages_two_stage returns streaming responses using TwoStageProtocol",
+        "/api/chat/messages continues to work exactly as before (StandardProtocol)",
+        "Protocol selection via query parameter works (if implemented)",
+        "All existing tests pass, and new route is covered by tests"
+      ]
+    },
+    "reason": "Complete the external wiring so that two‑stage protocol is usable via a dedicated endpoint"
+  },
+  {
+    "task_id": "3-2",
+    "external_id": "P1-F3-T2-S1",
+    "title": "F3.2.1: Implement ContextService.js from approved design",
+    "status": "pending",
+    "workflow_stage": "devon_implementing",
+    "basic_info": {
+      "goal": "Implement ContextService class based on approved design for shared context building",
+      "area": "Service Implementation",
+      "notes": [
+        "Follow design from Task 3.0.2",
+        "Must support dependency injection",
+        "Should be in backend/src/services/ContextService.js"
+      ]
+    },
+    "instruction": {
+      "overview": "Create ContextService with methods for building context from chat history, file system, and project state",
+      "technical_details": {
+        "requirements": [
+          "Implement buildContext(projectId, chatHistory, userMessage)",
+          "Add dependency injection for FileSystemTool and DatabaseTool",
+          "Implement caching for file access",
+          "Export as ES module"
+        ],
+        "implementation_touchpoints": [
+          "File: backend/src/services/ContextService.js",
+          "Reference: docs/design/ContextService_architecture.md",
+          "Integration: update protocols to use ContextService"
+        ]
+      },
+      "acceptance_criteria": [
+        "ContextService.js created with working buildContext()",
+        "Dependency injection implemented",
+        "Tests pass for context building"
+      ]
+    },
+    "reason": "Create shared context building service to eliminate duplication"
+  },
+  {
+    "task_id": "3-2",
+    "external_id": "P1-F3-T2-S2",
+    "title": "F3.2.2: Move _prepareRequest() logic from OrionAgent to ContextService",
+    "status": "pending",
+    "workflow_stage": "devon_implementing",
+    "basic_info": {
+      "goal": "Extract and move context building logic from OrionAgent._prepareRequest() to ContextService",
+      "area": "Code Extraction",
+      "notes": [
+        "Carefully extract without breaking existing functionality",
+        "Update OrionAgent to use ContextService",
+        "Update TwoStageProtocol to use ContextService"
+      ]
+    },
+    "instruction": {
+      "overview": "Move context building logic from OrionAgent to ContextService and update all callers",
+      "technical_details": {
+        "requirements": [
+          "Extract logic from OrionAgent._prepareRequest()",
+          "Move to ContextService.buildContext()",
+          "Update OrionAgent to call ContextService",
+          "Update TwoStageProtocol to call ContextService"
+        ],
+        "implementation_touchpoints": [
+          "OrionAgent.js context building removal",
+          "ContextService.js logic addition",
+          "TwoStageProtocol.js context building update"
+        ]
+      },
+      "acceptance_criteria": [
+        "OrionAgent._prepareRequest() removed or significantly reduced",
+        "ContextService handles all context building",
+        "All protocols use ContextService for context building"
+      ]
+    },
+    "reason": "Complete extraction of duplicated context building logic"
+  }
+]

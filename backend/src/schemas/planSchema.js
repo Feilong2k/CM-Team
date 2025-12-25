@@ -1,5 +1,5 @@
 // Zod schemas for JSON Plan Schema v1.1
-// Based on .Docs/Protocols/JSON_Plan_Schema_v1.1.md
+// Based on docs/03-PROTOCOLS/core/JSON_Plan_Schema_v1.1.md
 
 const { z } = require('zod');
 

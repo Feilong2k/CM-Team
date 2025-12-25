@@ -1,6 +1,6 @@
 // Tara's Failing Tests for Subtask 1-2-1 — JSON Plan Schema & Import Logic
 // These tests MUST fail with placeholder implementation
-// Implementation contract: JSON Plan Schema v1.1 (.Docs/Protocols/JSON_Plan_Schema_v1.1.md)
+// Implementation contract: JSON Plan Schema v1.1 (docs/03-PROTOCOLS/core/JSON_Plan_Schema_v1.1.md)
 
 const { importPlan } = require('./jsonImporter');
 

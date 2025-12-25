@@ -76,11 +76,10 @@ To perform a **Full RED v2 Analysis**, follow this algorithm:
        - Identify **Resources Required** (Inputs).
        - Identify **Outputs** (Artifacts/State) produced.
    - **Evaluation:**
-     - If Sub-Action maps to a **Known Primitive** (see Primitive Registry):
-       - **STOP & AUDIT:** Run the **Dependency & Assumption Audit** (see tables below).
-     - Else (Complex/Unknown):
-       - **FAN OUT:** Add `Sub-Action` to `Q`.
-       - **Drill Down:** Continue recursion.
+     - **For every Sub-Action (regardless of current status):**
+       - Continue decomposition until Sub-Action is **listed in the Primitive Registry** AND all its sub-actions are also primitives.
+       - Only then: Run the **Dependency & Assumption Audit**.
+     - **Stop Condition:** Queue is empty **OR** Safety Gates Triggered.
 
 3. **Stop Condition:** Queue is empty **OR** Safety Gates Triggered:
    - Max Depth (e.g., >5) → Architecture Smell.
@@ -231,20 +230,82 @@ Using Feature 2: Orion Chat & Context as an example:
    - Always differentiate **Design Required?** from **Present Now?**.
 2. **VERIFIED_HAVE means actually checked.**
    - There must be a reproducible verification method (command, search, file, config) behind every ✓.
-3. **MISSING is not a failure – it’s a task generator.**
+3. **MISSING is not a failure – it's a task generator.**
    - Every MISSING item should produce a concrete **Resolution Task** in the roadmap or implementation requirements.
 4. **Outputs must map to Consumers.**
    - For every output, list at least one consumer. If none exist, question whether the output is needed.
 5. **RED feeds CAP/PCC.**
    - Use RED findings (Missing Fundamentals + verified tools/inputs) as inputs into CAP/PCC so plans are both logically sound and physically executable.
+6. **Always use Expanded Tables Format for AI-assisted analysis.**
+   - When performing RED analysis with AI assistance (e.g., gpt4.1-mini), **mandatorily include Section 2 expanded breakdown tables** as shown in `RED_two_stage_protocol_plan_vFinal_EXPANDED.md`.
+   - Format: Parent→child action mapping with columns: L1 Action (Parent), L2 Action (Child), Resources Touched, Resources Required, Output, Primitive?, Status.
+   - This ensures systematic decomposition and prevents superficial analysis.
+7. **Prefer gpt4.1-mini for complex RED analyses.**
+   - For large, complex systems with many dependencies, use **gpt4.1-mini** due to its larger context window (128K+ tokens).
+   - Benefits: Can hold entire codebase context, maintain consistency across deep recursive decomposition, and avoid truncation of expanded tables.
+   - Trade-off: May be slower/more expensive than smaller models; reserve for high-risk, complex features.
 
 ---
+
+## AI-Assisted RED Analysis Protocol
+
+### Expanded Tables Requirement
+When an AI (e.g., Adam, Orion, or any architect agent) performs RED analysis, it **must** produce the **Section 2 expanded breakdown tables** as exemplified in `docs/03-PROTOCOLS/two-stage/analysis/RED_two_stage_protocol_plan_vFinal_EXPANDED.md`.
+
+**Required Table Structure:**
+```
+### 2. RED Breakdown — Expanded Tables
+
+#### 2.1. Level 1 → Level 2
+
+| L1 Action (Parent) | L2 Action (Child) | Resources Touched | Resources Required | Output | Primitive? | Status |
+|---|---|---|---|---|---:|---|
+| [Parent action] | [Child action] | [Tools/resources used] | [Inputs needed] | [Artifact produced] | ✓/✗ | VERIFIED_HAVE/MISSING/NEED_Verification |
+
+#### 2.2. Level 2 → Level 3 (Selected Deep Dives)
+[Continue recursion for complex actions]
+```
+
+**Why Mandatory:**
+1. **Systematic decomposition:** Forces explicit parent→child mapping, preventing skipped layers.
+2. **Audit trail:** Each primitive's status (VERIFIED_HAVE/MISSING) is documented with evidence.
+3. **AI consistency:** Ensures all AI analysts follow the same rigorous format, regardless of model or context.
+4. **Actionable output:** Directly maps to Missing Fundamentals and implementation tasks.
+
+### Model Selection Guidance
+- **For simple features:** Any capable model (DeepSeek, GPT-4, etc.) with sufficient context.
+- **For complex, multi-layer systems:** **Prefer gpt4.1-mini** due to:
+  - **128K+ token context:** Can hold entire codebase snippets, previous analyses, and expanded tables without truncation.
+  - **Consistency maintenance:** Keeps track of deep recursion chains and cross-references.
+  - **Cost-effectiveness:** Lower cost than GPT-4 Turbo for large context workloads.
+  - **Availability:** Integrated into the existing adapter stack (`GPT41Adapter`).
+
+**Implementation Note:** When Adam or Orion performs RED analysis, they should be configured to use gpt4.1-mini for features with >10 expected decomposition layers or when the codebase context exceeds 50K tokens.
+
+### Verification Integration
+AI-assisted RED must still adhere to **truthfulness rules**:
+- No row may be marked `VERIFIED_HAVE` without concrete evidence (code search, command output, file presence).
+- `NEED_Verification` is acceptable for items that require human or runtime verification.
+- All `MISSING` items must generate explicit resolution tasks.
+
+### Primitive Registry Integration
+The `Primitive_Registry.md` defines atomic primitives that can stop RED decomposition. An action is only considered primitive when:
+
+1. **Registry Entry Exists:** Action is listed in the Primitive Registry
+2. **All Sub-Actions Are Primitives:** Every child action also maps to registry entries
+3. **Verification Complete:** All three conditions are satisfied:
+   - **Tool Exists:** Binary/library/function available
+   - **Knowledge Exists:** Syntax/arguments known
+   - **Access Exists:** Permissions/environment confirmed
+
+**Critical Rule:** Do NOT stop decomposition simply because an action appears to be primitive. Verify it's in the registry and all its dependencies are also primitives. Continue decomposition for ALL items (VERIFIED_HAVE, MISSING, NEED_Verification) until reaching registry primitives.
 
 ## Summary
 
 RED v2 formalizes the distinction between **what the design assumes** and **what the system actually has**. By:
 - Recursively decomposing actions into primitives,
-- Auditing tools, inputs, and outputs with explicit verification methods and checkmarks, and
+- Auditing tools, inputs, and outputs with explicit verification methods and checkmarks,
+- Mandating expanded tables format for AI-assisted analysis, and
 - Turning every unverified assumption into a **Missing Fundamental + Resolution Task**,
 
 it reduces the risk of "we finished all the tasks but still missed the goal" and surfaces hidden bugs early in the planning phase.

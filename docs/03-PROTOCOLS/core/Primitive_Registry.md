@@ -162,6 +162,86 @@ Each entry follows this structure:
 
 ---
 
+## LLM & AI Primitives
+
+### LLM: gpt41_adapter_send
+**Tool:** `GPT41Adapter.sendMessages()` method
+**Verification:** Call adapter with test messages, verify API response
+**Failure Modes:** API key invalid, network timeout, rate limiting
+**Notes:** Requires OpenAI GPT-4.1-mini access
+
+### LLM: ds_chat_adapter_stream
+**Tool:** `DS_ChatAdapter.streaming()` method
+**Verification:** Stream response from DeepSeek API, verify chunks
+**Failure Modes:** API endpoint down, token limit exceeded
+**Notes:** Uses DeepSeek API with streaming support
+
+### LLM: llm_adapter_interface
+**Tool:** `LLMAdapter` abstract class methods
+**Verification:** Implement adapter and test all interface methods
+**Failure Modes:** Interface contract violation, missing method implementations
+**Notes:** Base class for all LLM adapters
+
+## Tool Execution Primitives
+
+### TOOL: toolrunner_execute
+**Tool:** `ToolRunner.execute()` method
+**Verification:** Execute a tool with valid parameters, verify result
+**Failure Modes:** Tool not found, parameter validation failed, timeout
+**Notes:** Central tool execution engine
+
+### TOOL: registry_get_tool
+**Tool:** `ToolRegistry.getTool()` method
+**Verification:** Look up tool by name, verify tool definition returned
+**Failure Modes:** Tool not registered, duplicate tool names
+**Notes:** Tool discovery and metadata access
+
+### TOOL: canonical_signature_build
+**Tool:** `ToolRunner._buildCanonicalSignature()` method
+**Verification:** Build signature from tool call, verify format consistency
+**Failure Modes:** Missing required parameters, signature collision
+**Notes:** Used for duplicate detection
+
+## Trace & Logging Primitives
+
+### TRACE: trace_service_log
+**Tool:** `TraceService.log()` method
+**Verification:** Log trace event, verify storage (DB or memory)
+**Failure Modes:** Trace storage full, serialization error
+**Notes:** Centralized tracing with configurable sinks
+
+### TRACE: trace_event_create
+**Tool:** `TraceEvent` class constructor
+**Verification:** Create trace event with valid type and data
+**Failure Modes:** Invalid trace type, data too large
+**Notes:** Immutable trace event representation
+
+### TRACE: redact_details_implementation
+**Tool:** `redactDetails()` function in TraceService
+**Verification:** Redact sensitive data (API keys, paths), verify original data not leaked
+**Failure Modes:** Incomplete redaction, false positives
+**Notes:** Security-critical function
+
+## Protocol & Service Primitives
+
+### PROTOCOL: strategypattern_execute
+**Tool:** `ProtocolStrategy.execute()` method
+**Verification:** Execute protocol strategy with context, verify phase transitions
+**Failure Modes:** Strategy not implemented, invalid state transition
+**Notes:** Interface for all protocol implementations
+
+### PROTOCOL: twostage_cyclephase
+**Tool:** `TwoStageProtocol.cyclePhase()` method
+**Verification:** Cycle between A/B phases, verify phase metadata updated
+**Failure Modes:** Cycle counter overflow, duplicate detection failure
+**Notes:** Core of two-stage protocol
+
+### PROTOCOL: contextservice_buildcontext
+**Tool:** `ContextService.buildContext()` method
+**Verification:** Build chat context from history and files, verify context structure
+**Failure Modes:** DB query failure, file read errors, token limit exceeded
+**Notes:** Centralized context hydration
+
 ## Adding New Primitives
 When FAP discovers a new "atomic" action that should be considered primitive:
 1. Add it to this registry with the standard format

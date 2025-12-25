@@ -184,8 +184,8 @@ class DatabaseTool {
       'status',
       'basic_info',
       'pcc',
-      'pvp_analysis',
-      'fap_analysis',
+      'cap',
+      'red',
       'activity_log',
     ]);
 
@@ -242,7 +242,7 @@ class DatabaseTool {
       'status',
       'basic_info',
       'pcc',
-      'pvp_analysis',
+      'cap',
       'activity_log',
     ]);
 
@@ -521,7 +521,7 @@ class DatabaseTool {
       }
 
       const insertRes = await db.query(
-        `INSERT INTO features (project_id, external_id, title, status, basic_info, pcc, pvp_analysis, fap_analysis, created_at, updated_at)
+        `INSERT INTO features (project_id, external_id, title, status, basic_info, pcc, cap, red, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
          RETURNING *`,
         [project, externalId, title, status, basic_info, pcc, cap, red]
@@ -592,7 +592,7 @@ class DatabaseTool {
       }
 
       const insertRes = await db.query(
-        `INSERT INTO tasks (feature_id, external_id, title, status, basic_info, pcc, pvp_analysis, created_at, updated_at)
+        `INSERT INTO tasks (feature_id, external_id, title, status, basic_info, pcc, cap, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
          RETURNING *`,
         [feature.id, externalId, title, status, basic_info, pcc, cap]

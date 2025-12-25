@@ -1,0 +1,114 @@
+# Tara CDP Analysis for Subtask P1-F3-T1-S2
+# Target: Implement TwoStageProtocol class (migrate TwoStageOrchestrator logic)
+# Source: Subtask instructions from docs/00-INBOX/Tara_P1-F3-T1-S2_TwoStageProtocol_tests_prompt.md
+# Reference Implementation: backend/src/services/TwoStageOrchestrator.js
+# Interface: backend/src/agents/protocols/ProtocolStrategy.js
+
+---
+## 1. Atomic Actions (from spec)
+- Create TwoStageProtocol class extending ProtocolStrategy in `backend/src/agents/protocols/TwoStageProtocol.js`
+- Constructor accepts { adapter, tools, traceService } and stores them
+- Implement getName() returning 'two-stage'
+- Implement canHandle() returning true (can handle all requests)
+- Implement async *executeStreaming(executionContext) with A/B cycling logic migrated from TwoStageOrchestrator.orchestrate()
+- Key behaviors:
+  1. Action Phase: stream from adapter, stop at first complete tool call
+  2. Tool Phase: execute first complete tool call via ToolRunner.executeToolCalls()
+  3. Duplicate detection: compute signatures, block duplicates, enforce MAX_DUPLICATE_ATTEMPTS
+  4. Budget enforcement: MAX_PHASE_CYCLES from executionContext.config
+  5. Emit ProtocolEventTypes events (CHUNK, TOOL_CALLS, DONE, PHASE, ERROR)
+  6. Exactly one DONE event per turn
+  7. Inject system messages for tool results and duplicate refusals
+  8. Respect debugShowToolResults config for emitting tool result chunks
+
+## 2. Resources Touched
+- **File System**:
+  - File creation: backend/src/agents/protocols/TwoStageProtocol.js
+  - Potential updates to import statements in OrionAgent (post-MVP)
+- **Dependencies**:
+  - LLMAdapter (via executionContext.adapter)
+  - ToolRunner (via executionContext.tools map)
+  - TraceService (via executionContext.traceService)
+- **Configuration**: executionContext.config (maxPhaseCycles, maxDuplicateAttempts, debugShowToolResults)
+- **Network**: Adapter may make external API calls (outside scope of unit tests)
+- **Environment Variables**: TWO_STAGE_DEBUG (optional) for debug output
+
+## 3. System Physics
+- **Streaming Asynchronous Generators**: Must handle backpressure, cleanup, and error propagation.
+- **Tool Call Merging**: Adapter may stream tool calls incrementally; need to merge partial calls.
+- **Duplicate Detection**: Signature computation depends on tool name, action, parameters, and projectId.
+- **State Management**: Per-request state (phaseIndex, cycleIndex, blockedSignatures, duplicateAttemptCount) must be isolated.
+- **Concurrency**: Multiple protocol instances may run concurrently; no shared state.
+- **Performance**: Looping up to maxPhaseCycles (default 3) with adapter calls each cycle.
+- **Error Handling**: Adapter errors, tool execution errors, malformed tool calls must be surfaced as ERROR events.
+
+## 4. Test Seams Validation
+- **TwoStageProtocol Class**: Can be instantiated with mocked dependencies.
+- **Adapter Streaming**: Mock adapter.sendMessagesStreaming to yield controlled events.
+- **ToolRunner**: Mock executeToolCalls to simulate tool execution results.
+- **TraceService**: Mock logEvent for observability.
+- **ProtocolExecutionContext**: Provides config and dependencies; can be constructed with mocks.
+- **ProtocolEventTypes**: Constants for event type validation.
+
+**Seam Status**: ✅ Acceptable. All dependencies can be mocked; the class can be tested in isolation.
+
+## 5. Anti-Placeholder Risks
+- **Risk 1**: TwoStageProtocol could implement executeStreaming with hardcoded generator that yields a DONE event without any logic.
+  - **Mitigation**: Tests must verify that adapter.sendMessagesStreaming is called with correct messages and config.
+- **Risk 2**: Duplicate detection could be omitted, allowing infinite loops.
+  - **Mitigation**: Tests must verify duplicate tool calls are blocked and refusal messages injected.
+- **Risk 3**: Budget enforcement could be ignored (maxPhaseCycles, maxDuplicateAttempts).
+  - **Mitigation**: Tests must verify that after exceeding budgets, final answer is forced.
+- **Risk 4**: Tool execution could be faked (e.g., ToolRunner not called).
+  - **Mitigation**: Tests must verify ToolRunner.executeToolCalls is called with correct parameters.
+- **Risk 5**: ProtocolEvent emissions could be missing required types (e.g., PHASE events).
+  - **Mitigation**: Tests must verify all expected event types are emitted.
+- **Risk 6**: Error handling could swallow errors, causing silent failures.
+  - **Mitigation**: Tests must verify errors are emitted as ERROR events.
+
+## 6. Security & Edge Cases
+- **Input Validation**: Validate tool call structure before execution; malformed calls should be ignored with system message.
+- **Signature Computation**: Ensure signature is deterministic and includes projectId for isolation.
+- **Tool Result Injection**: Tool results may contain sensitive data; ensure they are not logged inadvertently.
+- **Stream Cleanup**: Ensure async generator is properly closed on early termination.
+- **Memory**: Blocked signatures set may grow; bound by maxDuplicateAttempts.
+- **Concurrent Execution**: Ensure no cross-request state leakage.
+
+## 7. Test Scenarios (Derived)
+### Unit Tests (mocked dependencies)
+1. **Constructor** - Sets dependencies correctly.
+2. **getName()** - Returns 'two-stage'.
+3. **canHandle()** - Always returns true.
+4. **executeStreaming - Single tool call** - Executes tool and yields final answer.
+5. **executeStreaming - Multiple tool calls in one action phase** - Executes only first.
+6. **executeStreaming - No tool calls** - Yields final answer directly.
+7. **executeStreaming - Duplicate tool call** - Injects refusal message, does not execute.
+8. **executeStreaming - DuplicateExceeded** - Forces final answer after maxDuplicateAttempts.
+9. **executeStreaming - Budget exhaustion** - Forces final answer after maxPhaseCycles.
+10. **executeStreaming - ProtocolEvent emissions** - Verifies CHUNK, TOOL_CALLS, DONE, PHASE, ERROR events.
+11. **executeStreaming - ToolRunner integration** - Verifies ToolRunner.executeToolCalls called with correct parameters.
+12. **executeStreaming - Config respect** - Uses executionContext.config values.
+13. **executeStreaming - Debug flag** - Tool result chunks emitted only when debugShowToolResults true.
+14. **executeStreaming - Malformed tool call** - Ignored with system message.
+15. **executeStreaming - Adapter error** - Error event emitted.
+16. **executeStreaming - Tool execution error** - Error event emitted (or tool result with success false).
+17. **executeStreaming - State isolation** - Multiple instances do not share state.
+
+### Integration Test Patterns (future)
+- **OrionAgent integration**: OrionAgent can instantiate TwoStageProtocol and call executeStreaming.
+- **Route integration**: `/api/chat/messages_two_stage` route uses TwoStageProtocol.
+
+## 8. Clarification Needed
+- **Tool Call Merging**: Should TwoStageProtocol reuse the merging logic from TwoStageOrchestrator._mergeToolCallsIntoMap? Likely yes.
+- **Signature Computation**: Should rely on ToolRunner.buildCanonicalSignature or implement its own? The existing TwoStageOrchestrator uses buildCanonicalSignature but has fallback. Need to ensure signature consistency.
+- **Phase Events**: Should PHASE events be emitted for each phase? Design indicates yes; need to verify expected format.
+- **Error Event Format**: Should error event include Error object or string? ProtocolEventTypes defines error: Error.
+- **System Prompt**: TwoStageOrchestrator builds a system prompt; should TwoStageProtocol inject it? The executionContext.messages already includes system prompt from OrionAgent; likely not needed.
+
+## 9. Blocking Status
+- **Unblocked**. Implementation reference exists and test seams are clear.
+- **Note**: Must ensure migration does not break existing TwoStageOrchestrator behavior (tests should cover).
+
+---
+## Next Step: Write failing unit tests in `backend/src/_test_/two_stage_protocol_unit.spec.js`
+## Test Priority: Unit tests with mocking, covering all critical behaviors.

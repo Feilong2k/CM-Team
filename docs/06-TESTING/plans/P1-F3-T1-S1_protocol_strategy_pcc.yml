@@ -1,0 +1,109 @@
+# Tara CDP Analysis for Subtask P1-F3-T1-S1
+# Target: Implement ProtocolStrategy.js from approved design
+# Source: Subtask instructions from backend/template/F3-two_stage_protocol_service_foundation.json
+# Design: docs/02-ARCHITECTURE/designs/3-0/ProtocolStrategy_interface_MVP.md
+
+---
+## 1. Atomic Actions (from spec)
+- Create directory: backend/src/agents/protocols/
+- Create ProtocolStrategy.js file with:
+  - Abstract class ProtocolStrategy with methods:
+    - async *executeStreaming(executionContext) (throws "must be implemented")
+    - getName() (throws "must be implemented")
+    - canHandle(executionContext) (throws "must be implemented")
+  - Class ProtocolExecutionContext with constructor accepting:
+    - messages (array)
+    - mode ('plan' | 'act')
+    - projectId (string)
+    - requestId (string)
+    - adapter (LLMAdapter instance)
+    - tools (ToolRunner tools map)
+    - traceService (TraceService instance)
+    - config (object with defaults: maxPhaseCycles, maxDuplicateAttempts, debugShowToolResults)
+  - ProtocolEventTypes constant object with CHUNK, TOOL_CALLS, DONE, PHASE, ERROR
+- Export ProtocolStrategy, ProtocolExecutionContext, ProtocolEventTypes as ES module
+- Ensure class can be extended by StandardProtocol and TwoStageProtocol
+
+## 2. Resources Touched
+- **File System**:
+  - Directory creation: backend/src/agents/protocols/
+  - File creation: backend/src/agents/protocols/ProtocolStrategy.js
+  - Potential updates to import statements in dependent files (OrionAgent, etc.) - but this is post-MVP.
+- **Dependencies**:
+  - LLMAdapter (existing)
+  - ToolRunner (existing)
+  - TraceService (existing)
+- **Configuration**: None directly (config passed via executionContext)
+- **Network**: None (interface only)
+- **Environment Variables**: None for interface itself (but TWO_STAGE_ENABLED for route gating)
+
+## 3. System Physics
+- **Streaming Interface**: Asynchronous generator pattern; must handle backpressure and cleanup.
+- **Error Propagation**: Errors in protocol implementations must be surfaced as ERROR events.
+- **Memory**: Execution context holds references to large objects (messages, tools). Should be passed by reference.
+- **Concurrency**: Multiple protocol instances may be created concurrently; no shared state.
+- **Extensibility**: Interface must allow future protocols without breaking changes.
+- **Performance**: Abstract class overhead minimal; streaming generator may have overhead.
+
+## 4. Test Seams Validation
+- **ProtocolStrategy Abstract Class**: Cannot be instantiated directly; methods throw.
+- **ProtocolExecutionContext**: Immutable properties after construction; config defaults.
+- **ProtocolEventTypes**: Constant object; immutable.
+- **Concrete Protocols**: StandardProtocol and TwoStageProtocol will extend ProtocolStrategy.
+- **Integration Points**:
+  - OrionAgent will inject dependencies (adapter, tools, traceService) into execution context.
+  - ToolRunner.executeToolCalls will be called by protocols.
+  - StreamingService will consume protocol events.
+
+**Seam Status**: ✅ Acceptable. Each component can be isolated for testing. The abstract class provides clear contract; concrete implementations can be mocked.
+
+## 5. Anti-Placeholder Risks
+- **Risk 1**: ProtocolStrategy could be concrete with default implementations that return dummy values.
+  - **Mitigation**: Test must verify executeStreaming(), getName(), canHandle() throw "must be implemented" when called on base class.
+- **Risk 2**: ProtocolExecutionContext could allow modification of properties (mutability) leading to side effects.
+  - **Mitigation**: Test must verify properties are read-only (or at least not accidentally mutable).
+- **Risk 3**: Config defaults could be missing or incorrect.
+  - **Mitigation**: Test must verify config defaults are set correctly when not provided.
+- **Risk 4**: ProtocolEventTypes could be missing required event types.
+  - **Mitigation**: Test must verify all five event types exist.
+- **Risk 5**: Concrete protocol could implement methods but return hardcoded values (e.g., getName returns 'test').
+  - **Mitigation**: Tests for concrete protocols (future) must verify real logic; but for interface tests we only need to ensure abstract class cannot be used as placeholder.
+
+## 6. Security & Edge Cases
+- **Input Validation**: ProtocolExecutionContext should validate required fields (e.g., messages array, adapter presence).
+- **Immutable Context**: Ensure execution context cannot be tampered with mid-stream.
+- **Error Handling**: ProtocolStrategy should define error event format; ensure errors are not swallowed.
+- **Stream Cleanup**: Async generators must properly handle early termination (return/throw).
+- **Configuration Injection**: Config may contain sensitive debug flags; ensure they are not logged inadvertently.
+
+## 7. Test Scenarios (Derived)
+### Unit Tests (interface validation)
+1. **ProtocolStrategy Abstract Class** - Cannot be instantiated directly (throws).
+2. **ProtocolStrategy.executeStreaming()** - Throws "must be implemented" when called on subclass without override.
+3. **ProtocolStrategy.getName()** - Throws "must be implemented".
+4. **ProtocolStrategy.canHandle()** - Throws "must be implemented".
+5. **ProtocolExecutionContext Constructor** - Sets all required properties.
+6. **ProtocolExecutionContext Config Defaults** - Default values for maxPhaseCycles, maxDuplicateAttempts, debugShowToolResults.
+7. **ProtocolExecutionContext Immutability** - Properties cannot be reassigned (optional).
+8. **ProtocolEventTypes** - Contains all five required event types.
+9. **ProtocolEventTypes Immutability** - Constants cannot be modified.
+10. **Mock Protocol Implementation** - Can extend ProtocolStrategy and implement methods (positive test).
+
+### Integration Test Patterns (conceptual)
+- **OrionAgent Integration**: OrionAgent can instantiate protocol and call executeStreaming (future).
+- **ToolRunner Contract**: Protocols must call ToolRunner.executeToolCalls with correct parameters (future).
+- **Streaming Service**: Protocol events can be consumed by streaming service (future).
+
+## 8. Clarification Needed
+- **Error Event Format**: Should error event include error object or string? Design says `{ type: 'error', error: Error }`. Need to ensure Error instance is serializable for streaming.
+- **Config Validation**: Should config validate numeric ranges (maxPhaseCycles > 0)? Likely post-MVP.
+- **Export Format**: Should be ES module (`export default ProtocolStrategy` or named exports?). Design indicates ES module; need to confirm.
+- **Directory Structure**: Should there be an index.js exporting all protocol-related classes? Not required for MVP.
+
+## 9. Blocking Status
+- **Unblocked**. Interface design is clear and test seams exist.
+- **Note**: Implementation must follow exact design specification; any deviation may break integration.
+
+---
+## Next Step: Write failing tests in `backend/src/_test_/protocol_strategy.spec.js`
+## Test Priority: Unit tests for interface contract only (RED stage).

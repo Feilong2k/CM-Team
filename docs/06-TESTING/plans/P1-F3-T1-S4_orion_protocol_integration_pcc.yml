@@ -1,0 +1,101 @@
+# Tara CDP Analysis for Subtask P1-F3-T1-S4
+# Target: Wire OrionAgent to use ProtocolStrategy implementations
+# Source: Subtask instructions from docs/00-INBOX/Tara_P1-F3-T1-S4_OrionAgent_Protocol_Integration_tests_prompt.md
+# Reference Implementation: OrionAgent (backend/src/agents/OrionAgent.js), ProtocolStrategy, StandardProtocol, TwoStageProtocol
+# Interface: ProtocolExecutionContext, ProtocolEventTypes
+
+---
+## 1. Atomic Actions (from spec)
+- Refactor OrionAgent to become a **protocol client**:
+  - Accept a `ProtocolStrategy` instance (StandardProtocol or TwoStageProtocol) via constructor or configuration.
+  - Build a proper `ProtocolExecutionContext` with:
+    - `messages` (built from system/history/user as today).
+    - `mode`, `projectId`, `requestId`.
+    - `adapter`, `tools`, `traceService`.
+    - `config` for protocol budgets (where applicable).
+  - Call `protocol.executeStreaming(executionContext)` and stream resulting `ProtocolEvent`s to the outside (StreamingService / routes).
+  - Forward `CHUNK` events as SSE/text to StreamingService.
+  - Handle `TOOL_CALLS`, `DONE`, `ERROR` appropriately.
+  - Do **not** duplicate protocol-specific logic (no extra A/B loop inside OrionAgent).
+
+## 2. Resources Touched
+- **File System**:
+  - Modification: `backend/src/agents/OrionAgent.js`
+  - Test file: `backend/src/_test_/orion_protocol_integration.spec.js`
+- **Dependencies**:
+  - ProtocolStrategy (base interface)
+  - StandardProtocol (already implemented)
+  - TwoStageProtocol (already implemented)
+  - LLMAdapter (via executionContext.adapter)
+  - ToolRunner (via executionContext.tools)
+  - TraceService (via executionContext.traceService)
+  - StreamingService (for SSE forwarding)
+- **Configuration**: OrionAgent may need to pass config (maxPhaseCycles, maxDuplicateAttempts) to TwoStageProtocol.
+- **Network**: Adapter may make external API calls (outside scope).
+- **Environment Variables**: None specific.
+
+## 3. System Physics
+- **Streaming Integration**: OrionAgent must adapt between its existing streaming format (`{ chunk, toolCalls, done }`) and ProtocolEvent format (`{ type, ... }`).
+- **State Management**: OrionAgent currently maintains its own loop (maxIterations, tool merging, PLAN mode whitelist). After refactoring, these responsibilities move to protocols:
+  - StandardProtocol: no loops, single adapter call, all tool calls executed.
+  - TwoStageProtocol: A/B cycling, duplicate detection, budget enforcement.
+- **Backward Compatibility**: Existing routes (`/api/chat/messages`) must continue to work; likely they will use StandardProtocol.
+- **Error Propagation**: Errors from protocol (adapter failures, tool execution errors) must be surfaced to client via SSE error events or thrown errors.
+- **Performance**: Single protocol call per request; no extra overhead.
+
+## 4. Test Seams Validation
+- **OrionAgent Class**: Can be instantiated with mocked protocol.
+- **ProtocolStrategy**: Mockable interface; can verify `executeStreaming` calls.
+- **ProtocolExecutionContext**: Can be constructed with mocks; OrionAgent must build it correctly.
+- **StreamingService**: Mockable to verify SSE forwarding.
+- **Adapter/Tools/TraceService**: Already mockable.
+
+**Seam Status**: ✅ Acceptable. All dependencies can be mocked; OrionAgent can be tested in isolation with a mock protocol.
+
+## 5. Anti-Placeholder Risks
+- **Risk 1**: OrionAgent could still call adapter directly, bypassing protocol.
+  - **Mitigation**: Tests must verify `adapter.sendMessagesStreaming` is **not** called when a protocol is injected.
+- **Risk 2**: OrionAgent could still implement its own tool execution loop (maxIterations, PLAN mode whitelist).
+  - **Mitigation**: Tests must verify `ToolRunner.executeToolCalls` is not called directly by OrionAgent (should be called inside protocol).
+- **Risk 3**: ProtocolExecutionContext could be built incorrectly (missing fields, wrong mode).
+  - **Mitigation**: Tests must verify context shape matches expectations.
+- **Risk 4**: Event forwarding could drop or misformat events (e.g., CHUNK not forwarded).
+  - **Mitigation**: Tests must verify that events from protocol are forwarded to StreamingService (or yielded by OrionAgent's stream).
+- **Risk 5**: Error handling could swallow protocol errors.
+  - **Mitigation**: Tests must verify errors are propagated (either as ERROR events or thrown).
+
+## 6. Security & Edge Cases
+- **PLAN Mode Whitelist**: Currently OrionAgent enforces a whitelist of read-only tools in PLAN mode. After refactoring, this logic should move to StandardProtocol? Or remain in OrionAgent? Decision needed.
+- **Tool Call Merging**: OrionAgent currently merges partial tool calls from streaming adapter. Protocols may handle merging themselves (TwoStageProtocol does). Ensure merging is not lost.
+- **Duplicate Detection**: TwoStageProtocol already implements duplicate detection; OrionAgent should not add extra duplicate logic.
+- **Configuration Injection**: OrionAgent must pass config (maxPhaseCycles, maxDuplicateAttempts) to ProtocolExecutionContext for TwoStageProtocol.
+- **Trace Hooks**: OrionAgent currently logs tool registration; should continue to work with protocols.
+
+## 7. Test Scenarios (Derived)
+### Integration Tests (mocked protocol)
+1. **Basic protocol injection** – OrionAgent can be constructed with a mock protocol.
+2. **Building ProtocolExecutionContext correctly** – Verify context contains correct messages, mode, projectId, requestId, adapter, tools, traceService, config.
+3. **Event forwarding – CHUNK and DONE** – Verify OrionAgent forwards CHUNK and DONE events from protocol to StreamingService (or yields them in its stream).
+4. **Tool call events – pass-through** – Verify OrionAgent forwards TOOL_CALLS events but does not execute tools itself.
+5. **No duplicate A/B logic inside OrionAgent** – Verify OrionAgent does not call adapter or ToolRunner directly when protocol is used.
+6. **Error handling** – Verify adapter errors surface as ERROR events (or thrown errors).
+7. **PLAN mode whitelist integration** (optional) – Ensure PLAN mode restrictions are respected (maybe via protocol config).
+8. **Configuration passthrough** – Verify config values (maxPhaseCycles, maxDuplicateAttempts) are passed to ProtocolExecutionContext.
+
+### Integration with Real Protocols (future)
+- **StandardProtocol integration** – Use real StandardProtocol instance, verify behavior matches legacy OrionAgent.
+- **TwoStageProtocol integration** – Use real TwoStageProtocol instance, verify A/B cycling works.
+
+## 8. Clarification Needed
+- **PLAN Mode Whitelist**: Should StandardProtocol enforce PLAN mode whitelist, or should OrionAgent still filter before passing to protocol? Likely OrionAgent should keep whitelist because it's a policy decision, not a protocol detail.
+- **Tool Call Merging**: Should OrionAgent still merge partial tool calls before passing to protocol, or should protocol handle merging? The adapter streaming already merges; but OrionAgent's `mergeToolCallsIntoMap` is currently used. Need to decide.
+- **StreamingService Integration**: OrionAgent currently yields events directly to route handler; does it need to forward to StreamingService? The route may call StreamingService. We'll assume OrionAgent yields events and route handles forwarding.
+- **Protocol Selection**: How will OrionAgent decide which protocol to use? S5 will handle route-level selection; for S4 we assume protocol is injected.
+
+## 9. Blocking Status
+- **Unblocked**. Protocols exist, OrionAgent is testable, seams are clear.
+- **Note**: Must ensure backward compatibility with existing routes and tests.
+
+---
+## Next Step: Write failing integration tests in `backend/src/_test_/orion_protocol_integration.spec.js`
+## Test Priority: Integration tests with mocked protocol, covering delegation and event forwarding.

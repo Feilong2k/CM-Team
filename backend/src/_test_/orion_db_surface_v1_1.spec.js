@@ -5,7 +5,7 @@
  * are not yet implemented. Once Devon implements them, the same tests
  * should pass (GREEN).
  * 
- * Follows CDP analysis in .Docs/Roadmap/TaraTests/F2-T0-S7_cdp.yml
+ * Follows CDP analysis in docs/04-ROADMAP/TaraTests/F2-T0-S7_cdp.yml
  */
 
 const db = require('../db/connection').pool || require('../db/connection');

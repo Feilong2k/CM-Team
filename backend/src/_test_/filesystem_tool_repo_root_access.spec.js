@@ -21,7 +21,7 @@ describe('FileSystemTool repo-root normalization', () => {
 
     try {
       const content = await fileSystemTool.tools.read_file({
-        path: '.Docs/Prompts/SystemPrompt_Orion.md',
+        path: 'docs/01-AGENTS/01-Orion/prompts/SystemPrompt_Orion.md',
       });
 
       expect(typeof content).toBe('string');

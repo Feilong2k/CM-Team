@@ -3,7 +3,7 @@
 -- Subtask F2-T0-S1: Create chat_messages table for Feature 2 (Orion Chat & Context)
 --
 -- This migration implements the decision record in:
---   .Docs/F2-T0/F2-T0-S1_Decision_ChatSchema.md
+--   docs/11-ARCHIVE/F2-T0/F2-T0-S1_Decision_ChatSchema.md
 -- and is designed to satisfy Tara's tests in:
 --   backend/src/_test_/chat_messages_migration.spec.js
 --

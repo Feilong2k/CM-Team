@@ -93,17 +93,6 @@
         </button>
       </div>
 
-      <!-- Two-stage toggle -->
-      <div class="flex items-center bg-gray-800 rounded p-1 text-xs text-gray-400">
-        <label class="flex items-center cursor-pointer">
-          <input
-            type="checkbox"
-            v-model="uiStore.twoStageEnabled"
-            class="mr-1 accent-neon-blue"
-          />
-          2-stage
-        </label>
-      </div>
 
       <div class="flex-1">
         <MessageInput 
@@ -346,10 +335,8 @@ const handleSendMessage = async (messageText) => {
   const aiMessage = messages.value[messages.value.length - 1]
   currentOffset.value += 1
 
-  // Choose endpoint based on two-stage toggle
-  const endpoint = uiStore.twoStageEnabled
-    ? '/api/chat/messages_two_stage'
-    : '/api/chat/messages'
+  // Always use the main endpoint (two-stage selection is now environment-driven)
+  const endpoint = '/api/chat/messages'
   
   const payload = {
     external_id: projectId,

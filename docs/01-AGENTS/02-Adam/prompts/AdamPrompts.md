@@ -79,6 +79,50 @@ When asked to create detailed specs:
 * No ambiguous responsibilities
 * Identify potential scalability bottlenecks
 
+## Goal Alignment & User Confirmation Protocol
+
+### 1. Always anchor to the feature/task goal
+- At the start of any plan or breakdown, **explicitly restate the goal** of the current feature or task in 1–3 sentences.
+- Treat this restated goal as the **north star** for all subsequent recommendations.
+- For each major suggestion (architecture choice, task split, tradeoff), be able to answer:
+  - “How does this move us closer to the stated goal?”
+
+### 2. Keep recommendations strictly aligned with the goal
+- Do **not** propose changes that conflict with the core purpose of the feature or task (e.g., re‑introducing deprecated components, bypassing a target architecture) **unless** the user has explicitly approved that exception.
+- When multiple options exist, **prefer the one that best supports the stated end product**, even if it is slightly more work, as long as it stays within scope.
+- Avoid “random” adjustments to scope (widening or narrowing) unless you are explicitly asked to reconsider the scope.
+
+### 3. Explicit handling of deprecated / legacy components
+- Treat any component or pattern marked as **deprecated**, **legacy**, or **“DO NOT USE”** as **off-limits for new designs** by default.
+- Do **not** recommend using such components in new or refactored flows.
+- If, during design, you believe using a deprecated component is the only viable option:
+  1. **Stop and flag the conflict clearly.**
+  2. Explain why you think it might be necessary.
+  3. **Ask the user for explicit approval** before including it in any recommendation.
+
+### 4. Ask before going against the goal
+- If a seemingly “practical” shortcut would:
+  - undermine the main architectural objective,
+  - reintroduce technical debt the feature is meant to remove,
+  - or significantly change the nature of the end product,
+  then you **must not silently take that shortcut**.
+
+- Instead, you must:
+  1. **State the conflict**: “This shortcut goes against the feature’s goal because …”
+  2. Present clearly labeled options (e.g. **Option A: stays aligned with goal**, **Option B: shortcut, but conflicts with goal**).
+  3. **Ask the user which option to take** before proceeding.
+
+### 5. Clarify instead of assuming
+- When the feature/task goal is ambiguous, outdated, or appears to conflict with existing code:
+  - Do **not** guess or infer a new goal on your own.
+  - Ask the user **one or two focused clarification questions** to resolve the ambiguity before proposing a design.
+- If historical context (older worklogs, prompts, or specs) seems to conflict with the current request, call that out and ask the user which source of truth to prioritize.
+
+### 6. Make goal alignment explicit in your output
+- For every major recommendation, include a brief **“Goal alignment” note**, for example:
+  - “**Goal alignment:** This keeps TwoStageOrchestrator off the main path and uses TwoStageProtocol via ProtocolStrategy as required by Feature 3.”
+- If you ever propose something that is even slightly non-obvious with respect to the goal, explicitly state why it is still aligned.
+
 ## Pre-Validation Protocol
 
 Before outputting tasks:

@@ -13,9 +13,6 @@ export const useUIStore = defineStore('ui', () => {
   // Trace dashboard visibility
   const traceVisible = ref(localStorage.getItem('orion_trace_visible') === 'true')
 
-  // Two-stage protocol toggle (routes messages to /api/chat/messages_two_stage)
-  const twoStageEnabled = ref(localStorage.getItem('orion_two_stage_enabled') === 'true')
-
   // --- Watchers for Persistence ---
   
   watch(chatMode, (newVal) => {
@@ -28,10 +25,6 @@ export const useUIStore = defineStore('ui', () => {
 
   watch(traceVisible, (newVal) => {
     localStorage.setItem('orion_trace_visible', String(newVal))
-  })
-
-  watch(twoStageEnabled, (newVal) => {
-    localStorage.setItem('orion_two_stage_enabled', String(newVal))
   })
 
   // --- Actions ---
@@ -50,18 +43,12 @@ export const useUIStore = defineStore('ui', () => {
     traceVisible.value = !traceVisible.value
   }
 
-  function toggleTwoStage() {
-    twoStageEnabled.value = !twoStageEnabled.value
-  }
-
   return {
     chatMode,
     draftMessage,
     traceVisible,
-    twoStageEnabled,
     setChatMode,
     setDraftMessage,
-    toggleTrace,
-    toggleTwoStage
+    toggleTrace
   }
 })

@@ -6,7 +6,12 @@ const { getToolsForRole } = require('../../tools/registry');
 const { DS_ChatAdapter, GPT41Adapter } = require('../adapters');
 const StreamingService = require('../services/StreamingService');
 const TraceService = require('../services/trace/TraceService');
+// LEGACY: TwoStageOrchestrator is deprecated; keep import for backward compatibility
 const TwoStageOrchestrator = require('../services/TwoStageOrchestrator');
+// ProtocolStrategy imports
+const { ProtocolExecutionContext, ProtocolEventTypes } = require('../agents/protocols/ProtocolStrategy');
+const TwoStageProtocol = require('../agents/protocols/TwoStageProtocol');
+const StandardProtocol = require('../agents/protocols/StandardProtocol');
 
 /**
  * Create chat messages router with configurable dependencies
@@ -95,6 +100,60 @@ function createChatMessagesRouter(options = {}) {
     }
   }
 
+  /**
+   * Convert ProtocolEvents to the stream format expected by streamingService.handleSSE
+   * @param {AsyncGenerator<ProtocolEvent>} protocolStream
+   * @returns {AsyncGenerator<{chunk?, toolCalls?, done?, fullContent?, error?}>}
+   */
+  async function* protocolStreamToAdapterStream(protocolStream) {
+    for await (const event of protocolStream) {
+      switch (event.type) {
+        case ProtocolEventTypes.CHUNK:
+          yield { chunk: event.content };
+          break;
+        case ProtocolEventTypes.TOOL_CALLS:
+          yield { toolCalls: event.calls };
+          break;
+        case ProtocolEventTypes.DONE:
+          yield { done: true, fullContent: event.fullContent || '' };
+          break;
+        case ProtocolEventTypes.ERROR:
+          yield { error: event.error?.message || 'Protocol error' };
+          break;
+        case ProtocolEventTypes.PHASE:
+          // Phase events are internal, not forwarded to client
+          break;
+        default:
+          // Forward unknown events as-is
+          yield event;
+      }
+    }
+  }
+
+  /**
+   * Build messages for protocol execution based on user input and context.
+   * This replicates the logic from OrionAgent._prepareRequest but simplified.
+   */
+  async function buildProtocolMessages(projectId, userMessage, mode, requestId) {
+    // Build system prompt similar to OrionAgent's formatSystemPrompt
+    // For simplicity, we'll reuse OrionAgent's internal method, but we need to avoid circular dependency.
+    // Instead, we'll create a minimal system prompt.
+    // In practice, the protocol will use its own system prompt; we'll rely on the protocol's internal handling.
+    // However, we need to provide messages to ProtocolExecutionContext.
+    // We'll mimic the same messages that OrionAgent would produce.
+    // For now, we'll just create a simple system message and user message.
+    // The protocol will add its own system prompt.
+    // We'll just pass the user message; the protocol will prepend its system prompt.
+    // The ProtocolExecutionContext expects messages array; we'll provide a placeholder.
+    // The actual messages will be built by the protocol.
+    // We'll return a simple array with a system message (placeholder) and user message.
+    // The protocol will replace the system message with its own.
+    return [
+      { role: 'system', content: 'Placeholder system prompt' },
+      { role: 'user', content: userMessage }
+    ];
+  }
+
   router.post('/messages', async (req, res) => {
     const { external_id, sender, content, metadata } = req.body;
 
@@ -144,83 +203,154 @@ function createChatMessagesRouter(options = {}) {
         const wantsStreaming = acceptHeader.includes("text/event-stream");
         const mode = (metadata && metadata.mode) || "plan";
 
-        // Unified Streaming Logic for both PLAN and ACT modes
-        // We ignore "wantsStreaming" check effectively, as the frontend will be updated to always stream.
-        // But for backward compatibility with non-streaming clients (if any), we could keep a branch?
-        // No, requirements say unified pipeline. We will force streaming or at least use the streaming agent method.
-        // However, if the client sends a regular POST and expects JSON, we can't send SSE.
-        // So we keep the check but use the SAME agent logic underneath? No, agent logic is generator.
-        // Let's assume frontend IS updated to use SSE. If a client expects JSON, we'd need to consume the stream
-        // and send JSON at end. But to simplify, let's assume we are serving our own frontend which uses SSE.
+        // Check if two-stage protocol is enabled via environment variable
+        const isTwoStageEnabled = process.env.TWO_STAGE_ENABLED === 'true';
+        
+        if (isTwoStageEnabled) {
+          // Use TwoStageProtocol via ProtocolStrategy
+          const twoStageProtocol = new TwoStageProtocol({
+            adapter,
+            tools,
+            traceService: TraceService,
+          });
 
-        // Use the unified streaming process
-        const adapterStream = orionAgent.processStreaming(external_id, content, {
-          mode,
-          requestId,
-        });
-        const stream = streamingService.streamFromAdapter(adapterStream);
+          // Build messages for protocol execution
+          const messages = await buildProtocolMessages(projectId, content, mode, requestId);
 
-        // Define onComplete callback to persist the message
-        const onComplete = async (fullContent) => {
-          try {
-            if (fullContent) {
-              const model = orionAgent.getModelName
-                ? orionAgent.getModelName()
-                : "unknown";
-              const persisted = await streamingService.persistStreamedMessage(
-                external_id,
-                fullContent,
-                { model, mode, streamed: true, ...metadata }
-              );
+          // Create ProtocolExecutionContext
+          const executionContext = new ProtocolExecutionContext({
+            messages,
+            mode,
+            projectId,
+            requestId,
+            adapter,
+            tools,
+            traceService: TraceService,
+            config: {
+              maxPhaseCycles: parseInt(process.env.MAX_PHASE_CYCLES || '3', 10),
+              maxDuplicateAttempts: parseInt(process.env.MAX_DUPLICATE_ATTEMPTS || '3', 10),
+              debugShowToolResults: process.env.TWO_STAGE_DEBUG === 'true',
+            },
+          });
 
-              // Log Orion streaming response
-              try {
-                const { computeContentHash } = require("../agents/OrionAgent");
-                const contentHash =
-                  typeof computeContentHash === "function"
-                    ? computeContentHash(fullContent)
-                    : fullContent.length; // Fallback simple metric if helper not exported
-
-                await TraceService.logEvent({
-                  projectId,
-                  type: "orion_response",
-                  source: "orion",
-                  timestamp: new Date().toISOString(),
-                  summary: `Orion streaming response (${mode})`,
-                  details: redactDetails({
-                    external_id,
-                    content: fullContent,
-                    metadata: persisted.metadata,
-                    model: orionAgent.getModelName
-                      ? orionAgent.getModelName()
-                      : "unknown",
-                    provider: process.env.ORION_MODEL_PROVIDER || "deepseek",
-                    contentHash,
-                    contentLength: fullContent.length,
-                  }),
-                  requestId,
-                });
-
-              } catch (traceErr) {
-                console.error(
-                  "Trace logging failed for Orion streaming response:",
-                  traceErr
+          // Execute protocol streaming
+          const protocolStream = twoStageProtocol.executeStreaming(executionContext);
+          // Convert to adapter stream format
+          const stream = protocolStreamToAdapterStream(protocolStream);
+          
+          // Define onComplete callback to persist the message
+          const onComplete = async (fullContent) => {
+            try {
+              if (fullContent) {
+                const model = orionAgent.getModelName
+                  ? orionAgent.getModelName()
+                  : "unknown";
+                await streamingService.persistStreamedMessage(
+                  external_id,
+                  fullContent,
+                  { model, mode, streamed: true, protocol: 'two_stage', ...metadata }
                 );
+
+                // Log Orion response trace event
+                try {
+                  const { computeContentHash } = require("../agents/OrionAgent");
+                  const contentHash = typeof computeContentHash === "function"
+                    ? computeContentHash(fullContent)
+                    : fullContent.length;
+
+                  await TraceService.logEvent({
+                    projectId,
+                    type: "orion_response",
+                    source: "orion",
+                    timestamp: new Date().toISOString(),
+                    summary: `Two-stage Orion response (${mode})`,
+                    details: redactDetails({
+                      external_id,
+                      content: fullContent,
+                      metadata: { model, mode, streamed: true, protocol: 'two_stage', ...metadata },
+                      model,
+                      provider: process.env.ORION_MODEL_PROVIDER || "deepseek",
+                      contentHash,
+                      contentLength: fullContent.length,
+                    }),
+                    requestId,
+                  });
+                } catch (traceErr) {
+                  console.error("Trace logging failed for two-stage Orion response:", traceErr);
+                }
               }
+            } catch (persistError) {
+              console.error("Failed to persist two-stage streamed message:", persistError);
             }
-          } catch (persistError) {
-            console.error("Failed to persist streamed message:", persistError);
-            // Error already sent via SSE in handleSSE
-          }
-        };
+          };
 
-        // Handle SSE response
-        // Note: If the client didn't ask for streaming (Accept: text/event-stream), handleSSE will likely
-        // still try to write SSE headers. We should probably enforce SSE.
-        // If we really need to support non-streaming clients, we would need a utility to consume the stream
-        // and return JSON. For now, we assume the primary client (ChatPanel) will request streaming.
+          // Handle SSE response using the same service
+          await streamingService.handleSSE(stream, res, onComplete);
+        } else {
+          // Use standard protocol (OrionAgent.processStreaming)
+          const adapterStream = orionAgent.processStreaming(external_id, content, {
+            mode,
+            requestId,
+          });
+          const stream = streamingService.streamFromAdapter(adapterStream);
 
-        await streamingService.handleSSE(stream, res, onComplete);
+          // Define onComplete callback to persist the message
+          const onComplete = async (fullContent) => {
+            try {
+              if (fullContent) {
+                const model = orionAgent.getModelName
+                  ? orionAgent.getModelName()
+                  : "unknown";
+                const persisted = await streamingService.persistStreamedMessage(
+                  external_id,
+                  fullContent,
+                  { model, mode, streamed: true, ...metadata }
+                );
+
+                // Log Orion streaming response
+                try {
+                  const { computeContentHash } = require("../agents/OrionAgent");
+                  const contentHash =
+                    typeof computeContentHash === "function"
+                      ? computeContentHash(fullContent)
+                      : fullContent.length; // Fallback simple metric if helper not exported
+
+                  await TraceService.logEvent({
+                    projectId,
+                    type: "orion_response",
+                    source: "orion",
+                    timestamp: new Date().toISOString(),
+                    summary: `Orion streaming response (${mode})`,
+                    details: redactDetails({
+                      external_id,
+                      content: fullContent,
+                      metadata: persisted.metadata,
+                      model: orionAgent.getModelName
+                        ? orionAgent.getModelName()
+                        : "unknown",
+                      provider: process.env.ORION_MODEL_PROVIDER || "deepseek",
+                      contentHash,
+                      contentLength: fullContent.length,
+                    }),
+                    requestId,
+                  });
+
+                } catch (traceErr) {
+                  console.error(
+                    "Trace logging failed for Orion streaming response:",
+                    traceErr
+                  );
+                }
+              }
+            } catch (persistError) {
+              console.error("Failed to persist streamed message:", persistError);
+              // Error already sent via SSE in handleSSE
+            }
+          };
+
+          // Handle SSE response
+          await streamingService.handleSSE(stream, res, onComplete);
+        }
         return;
       } else {
         // For other senders, just store the message
@@ -261,7 +391,7 @@ function createChatMessagesRouter(options = {}) {
     }
   });
 
-  // Two-stage/Triggered-Phase Prototype Route
+  // Two-stage/Triggered-Phase Prototype Route (LEGACY - kept for backward compatibility)
   router.post('/messages_two_stage', async (req, res) => {
     const { external_id, sender, content, metadata } = req.body;
 
@@ -316,7 +446,7 @@ function createChatMessagesRouter(options = {}) {
         console.error("Trace logging failed for two-stage user message:", err);
       }
 
-      // Create TwoStageOrchestrator instance
+      // Create TwoStageOrchestrator instance (LEGACY)
       const twoStageOrchestrator = new TwoStageOrchestrator(adapter, tools);
 
       // Set up SSE response

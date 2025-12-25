@@ -5,11 +5,50 @@
 
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { vi, describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest'
 
 // Vitest globals are enabled via vitest.config.js (test.globals = true)
 // but we import them explicitly to be safe
 import ChatPanel from '../components/ChatPanel.vue'
+
+// Ensure DOM globals are defined (jsdom environment may not be set up)
+beforeAll(() => {
+  if (typeof document === 'undefined') {
+    // Provide minimal DOM globals for Vue Test Utils
+    const { JSDOM } = require('jsdom')
+    const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>')
+    global.window = dom.window
+    global.document = dom.window.document
+    global.Element = dom.window.Element
+    global.HTMLElement = dom.window.HTMLElement
+    global.SVGElement = dom.window.SVGElement
+    global.HTMLDivElement = dom.window.HTMLDivElement
+    global.HTMLButtonElement = dom.window.HTMLButtonElement
+    global.HTMLInputElement = dom.window.HTMLInputElement
+    global.HTMLTextAreaElement = dom.window.HTMLTextAreaElement
+    global.MouseEvent = dom.window.MouseEvent
+    global.Event = dom.window.Event
+    global.KeyboardEvent = dom.window.KeyboardEvent
+    global.FocusEvent = dom.window.FocusEvent
+    global.CustomEvent = dom.window.CustomEvent
+    // navigator may be read-only; define with writable: true
+    Object.defineProperty(global, 'navigator', {
+      value: dom.window.navigator,
+      writable: true,
+      configurable: true,
+    })
+    global.requestAnimationFrame = (cb) => setTimeout(cb, 0)
+    global.cancelAnimationFrame = (id) => clearTimeout(id)
+    global.matchMedia = () => ({
+      matches: false,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+    })
+  }
+})
 
 // Mock the global fetch
 const mockFetch = vi.fn()

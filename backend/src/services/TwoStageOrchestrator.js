@@ -1,3 +1,9 @@
+// LEGACY / DO NOT USE
+// This orchestrator is kept for historical reference only.
+// Feature 3 (Two-Stage Protocol Service Foundation) replaces this with
+// ProtocolStrategy + TwoStageProtocol. New code and /api/chat/messages
+// must NOT depend on this module.
+
 const ToolRunner = require('../../tools/ToolRunner');
 const { buildCanonicalSignature } = require('../../tools/ToolRunner');
 const TraceService = require('./trace/TraceService');
@@ -393,8 +399,6 @@ class TwoStageOrchestrator {
       name: patchFn.name || existingFn.name,
       arguments: this._mergeArgumentStrings(existingFn.arguments, patchFn.arguments)
     };
-
-    return merged;
   }
 
   /**
@@ -500,15 +504,12 @@ PROTOCOL RULES:
 
 2. Only the FIRST complete tool call per action phase is executed.
 
-3. Do NOT repeat tool calls already executed in this turn - use previous results.
+3. Do NOT repeat tool calls already executed in this turn.
 
-4. Maximum ${this.MAX_PHASE_CYCLES_PER_TURN} tool executions per user turn.
+4. If duplicate tool calls persist, you will be forced to provide a final answer.
 
-5. When system messages indicate "Maximum duplicate tool call attempts exceeded" or "Maximum tool execution cycles reached", provide final answer without further tool calls.
-
-6. Mode: ${mode === 'plan' ? 'PLAN (exploratory, higher temperature)' : 'ACT (execution, lower temperature)'}
-
-Respond concisely and follow the protocol strictly.`;
+Current Mode: ${mode.toUpperCase()}
+`;
     return basePrompt;
   }
 }

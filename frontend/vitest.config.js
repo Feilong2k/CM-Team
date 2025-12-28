@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 
+console.log('Vitest config loaded')
+
 export default defineConfig({
   plugins: [vue()],
   test: {
@@ -12,5 +14,8 @@ export default defineConfig({
       },
     },
     setupFiles: ['./vitest.setup.js'],
+    environmentMatchGlobs: [
+      ['**/TraceDashboard.spec.js', 'jsdom']
+    ],
   },
 })

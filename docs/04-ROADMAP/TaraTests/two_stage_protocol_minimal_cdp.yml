@@ -1,0 +1,169 @@
+# CDP Analysis: TwoStageProtocol Minimal First Slice
+# Subtask: First backend slice of TwoStageProtocol for Orion v2
+# Analyst: Tara
+# Date: 2025-12-26
+
+## A. Atomic Actions
+
+### 1. Protocol Construction & Interface
+- **Behavior**: Create protocol instance with adapter, tools, traceService dependencies
+- **Real Outcome**: Protocol can be instantiated, has getName() and canHandle() methods
+- **Risk Level**: Low
+- **Test Seams**: 
+  - Module loading (require path)
+  - Constructor parameter validation
+  - ProtocolStrategy inheritance
+
+### 2. Basic Streaming Behavior (Action Phase Only)
+- **Behavior**: Stream CHUNK and DONE events from adapter in correct order
+- **Real Outcome**: Users receive streaming text responses with proper completion
+- **Risk Level**: Medium
+- **Test Seams**:
+  - Adapter.sendMessagesStreaming() calls
+  - Event type conversion (adapter events → ProtocolEventTypes)
+  - Message normalization/filtering
+
+### 3. Tool Call Awareness (No Execution Yet)
+- **Behavior**: Forward TOOL_CALLS events from adapter without executing tools
+- **Real Outcome**: UI sees tool call proposals but no tool execution occurs
+- **Risk Level**: Medium
+- **Test Seams**:
+  - Tool call event forwarding
+  - Tool registry isolation (tools not called)
+  - Message stream integrity
+
+### 4. Basic Phase Scaffolding (Optional)
+- **Behavior**: Emit PHASE events for action phase (optional for minimal slice)
+- **Real Outcome**: UI can track protocol phase progression
+- **Risk Level**: Low
+- **Test Seams**:
+  - PHASE event emission timing
+  - Phase index tracking
+
+## B. Resources Touched
+
+### 1. Protocol Module
+- **Resource Type**: JavaScript module (`TwoStageProtocol.js`)
+- **Access Pattern**: Read/Execute (class instantiation, method calls)
+- **Isolation Risks**: Module dependencies (adapter, tools, traceService)
+
+### 2. LLM Adapter
+- **Resource Type**: External service interface
+- **Access Pattern**: Read/Execute (streaming calls)
+- **Isolation Risks**: Adapter interface stability, error handling
+
+### 3. Tool Registry
+- **Resource Type**: Tool function map
+- **Access Pattern**: Read-only (reference, not execution)
+- **Isolation Risks**: Tool interface compatibility
+
+### 4. Trace Service
+- **Resource Type**: Logging service
+- **Access Pattern**: Write (event logging)
+- **Isolation Risks**: Trace event format compatibility
+
+## C. System Physics
+
+### 1. Streaming Performance
+- **Physical Limits**: Async generator memory usage with large streams
+- **Failure Modes**: Memory exhaustion, stream corruption
+- **Mitigations**: Proper async iteration, error boundaries
+
+### 2. Adapter Interface Stability
+- **Physical Limits**: Adapter event format changes
+- **Failure Modes**: Event type mismatch, missing fields
+- **Mitigations**: Adapter interface contracts, type validation
+
+### 3. Tool Call Forwarding
+- **Physical Limits**: Large tool call payloads
+- **Failure Modes**: Payload truncation, serialization errors
+- **Mitigations**: JSON validation, size limits
+
+## D. Test Scenario Derivation
+
+### Critical Priority
+1. **Module Existence**: Protocol module can be loaded
+   - Test Type: Unit
+   - CDP Mapping: A.1
+
+2. **Streaming Integrity**: Events flow correctly from adapter
+   - Test Type: Integration
+   - CDP Mapping: A.2
+
+### High Priority
+3. **Tool Call Awareness**: Tool calls are forwarded without execution
+   - Test Type: Integration
+   - CDP Mapping: A.3
+
+4. **Interface Compliance**: ProtocolStrategy contract is satisfied
+   - Test Type: Unit
+   - CDP Mapping: A.1
+
+### Medium Priority
+5. **Phase Events**: Optional phase scaffolding
+   - Test Type: Integration
+   - CDP Mapping: A.4
+
+## E. Anti-Placeholder Validation
+
+### Current Implementation Risks
+- **Module Non-Existence**: Target module doesn't exist yet (expected RED phase)
+- **Placeholder Risk**: Tests must fail against any implementation that:
+  - Returns hardcoded event sequences
+  - Doesn't call adapter.sendMessagesStreaming()
+  - Ignores adapter toolCalls
+  - Uses static arrays instead of async iteration
+
+### Test Seam Verification
+- **Observable Outcomes**: 
+  - Actual adapter calls (jest.fn() verification)
+  - Event order and type correctness
+  - Tool call forwarding
+  - Single DONE event emission
+- **Placeholder Detection**: Tests check for:
+  - Adapter method calls
+  - Real async iteration
+  - Event type conversion
+
+## F. Blocking Conditions
+
+### Must Block If:
+1. Adapter interface is unstable or undocumented
+2. ProtocolStrategy base class cannot be extended
+3. Async generator patterns cannot be tested reliably
+
+### Can Proceed If:
+1. Adapter.sendMessagesStreaming() returns async iterable of {chunk?, toolCalls?, done?}
+2. ProtocolStrategy from archive provides stable interface
+3. Jest can test async generators
+
+## G. Assumptions & Questions
+
+### Assumptions
+1. Adapter interface: `sendMessagesStreaming(messages, options)` → AsyncIterable<{chunk?, toolCalls?, done?}>
+2. ProtocolEventTypes constants match archive definitions
+3. Tools parameter is map of toolName → {execute()} objects
+4. TraceService has `logEvent()` method
+
+### Questions for Clarification
+1. Should PHASE events be required in minimal slice or deferred?
+2. What exact adapter event format is expected?
+3. Are there any special error handling requirements?
+
+## H. Implementation Notes
+
+### Test Coverage Requirements
+- [x] Module loading and instantiation
+- [x] Basic streaming (CHUNK, DONE events)
+- [x] Message normalization
+- [x] Tool call forwarding
+- [x] No tool execution in minimal slice
+- [x] Optional phase events
+- [x] Anti-placeholder validation
+
+### Success Criteria
+- All tests fail in RED phase (module doesn't exist)
+- Tests will pass when Devon implements minimal protocol
+- No raw adapter events leak through (proper ProtocolEventTypes conversion)
+- Single DONE event per execution
+- Tool calls forwarded but not executed

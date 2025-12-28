@@ -1,0 +1,213 @@
+# CDP Analysis: OrionAgentV2 Streaming-Only Interface
+# Analyst: Tara
+# Date: 2025-12-25
+# Task: Write failing test for OrionAgentV2 that enforces streaming-only interface
+
+## A. Atomic Actions
+
+### 1. Module Existence
+- **Behavior**: OrionAgentV2 module should be importable
+- **Expected Outcome**: Module exists and exports a class
+- **Risk Level**: Low
+- **Test**: `should be defined when module exists`
+
+### 2. Constructor Dependency Injection
+- **Behavior**: Constructor accepts { adapter, tools, traceService, protocol }
+- **Expected Outcome**: Dependencies are stored for later use
+- **Risk Level**: Medium (if dependencies not stored, protocol cannot execute)
+- **Test**: `should accept dependencies in constructor`
+
+### 3. Streaming Interface
+- **Behavior**: `processStreaming()` returns async iterator
+- **Expected Outcome**: Method returns object with `[Symbol.asyncIterator]`
+- **Risk Level**: High (core streaming contract)
+- **Test**: `processStreaming should return an async iterator`
+
+### 4. Protocol Delegation (Act Mode)
+- **Behavior**: `processStreaming()` delegates to `protocol.executeStreaming()` with 'act' mode
+- **Expected Outcome**: Protocol receives correct `ProtocolExecutionContext` with mode='act'
+- **Risk Level**: High (incorrect context breaks protocol)
+- **Test**: `processStreaming should delegate to protocol.executeStreaming with correct context (act mode)`
+
+### 5. Protocol Delegation (Plan Mode)
+- **Behavior**: `processStreaming()` delegates to `protocol.executeStreaming()` with 'plan' mode
+- **Expected Outcome**: Protocol receives correct `ProtocolExecutionContext` with mode='plan'
+- **Risk Level**: High (incorrect mode breaks tool restrictions)
+- **Test**: `processStreaming should delegate to protocol.executeStreaming with correct context (plan mode)`
+
+### 6. System Message Content Validation
+- **Behavior**: System message includes project ID and mode
+- **Expected Outcome**: System message contains `projectId` and `mode` values
+- **Risk Level**: Medium (missing context leads to incorrect behavior)
+- **Test**: Both act and plan mode tests validate system message content
+
+### 5. Event Forwarding
+- **Behavior**: Agent forwards protocol events to stream
+- **Expected Outcome**: Stream yields same events protocol yields
+- **Risk Level**: Medium (events could be lost or modified)
+- **Test**: `processStreaming should yield protocol events`
+
+### 6. Anti-Placeholder Guard
+- **Behavior**: Implementation must not be placeholder
+- **Expected Outcome**: Not simple array or empty promise
+- **Risk Level**: Low (but critical for TDD)
+- **Test**: `should fail with placeholder implementation`
+
+### 7. Error Propagation
+- **Behavior**: Errors from protocol propagate through stream
+- **Expected Outcome**: Async iterator throws when protocol errors
+- **Risk Level**: Medium (errors could be swallowed)
+- **Test**: `should handle errors from protocol gracefully`
+
+## B. Resources Touched
+
+### 1. Module System
+- **Resource Type**: Node.js module
+- **Access Pattern**: Read (require/import)
+- **Isolation Risks**: None (test mocks dependencies)
+
+### 2. Protocol Interface
+- **Resource Type**: Protocol service
+- **Access Pattern**: Execute (call method)
+- **Isolation Risks**: Protocol must be mocked to avoid side effects
+
+### 3. Async Iterator Protocol
+- **Resource Type**: JavaScript language feature
+- **Access Pattern**: Create/consume
+- **Isolation Risks**: None (pure language feature)
+
+## C. System Physics
+
+### 1. Async Timing
+- **Physical Limits**: Event loop scheduling
+- **Failure Modes**: Deadlock, infinite async loops
+- **Mitigations**: Test timeouts, proper async/await usage
+
+### 2. Memory Constraints
+- **Physical Limits**: Stream could buffer large data
+- **Failure Modes**: Memory exhaustion
+- **Mitigations**: Stream events immediately, don't buffer
+
+### 3. Error Boundaries
+- **Physical Limits**: Uncaught exceptions crash process
+- **Failure Modes**: Process crash
+- **Mitigations**: Error propagation through async iterator
+
+## Test Scenario Derivation
+
+### Critical Priority (Must Test)
+1. **Protocol Delegation** - Ensures agent is thin wrapper
+   - Test Type: Integration
+   - Scenario: Verify protocol called with correct context
+
+2. **Streaming Interface** - Core contract
+   - Test Type: Unit
+   - Scenario: Verify async iterator returned
+
+3. **Event Forwarding** - Data integrity
+   - Test Type: Integration
+   - Scenario: Verify events not modified
+
+### High Priority (Should Test)
+4. **Constructor Injection** - Dependency management
+   - Test Type: Unit
+   - Scenario: Verify dependencies stored
+
+5. **Error Propagation** - Resilience
+   - Test Type: Unit
+   - Scenario: Verify errors not swallowed
+
+### Medium Priority (Could Test)
+6. **Module Existence** - Basic requirement
+   - Test Type: Unit
+   - Scenario: Verify module can be imported
+
+7. **Anti-Placeholder** - TDD discipline
+   - Test Type: Unit
+   - Scenario: Verify not trivial implementation
+
+## Security Analysis
+
+### 1. Input Validation
+- **Risk**: None (agent delegates validation to protocol)
+
+### 2. Dependency Injection
+- **Risk**: Low (dependencies provided by factory/DI container)
+
+### 3. Event Sanitization
+- **Risk**: Low (events passed through unchanged)
+
+## Test Seam Validation
+
+### Clear Seams Exist:
+1. **Agent ↔ Protocol**: `protocol.executeStreaming(context)`
+2. **Stream ↔ Consumer**: Async iterator protocol
+3. **Constructor ↔ Dependencies**: Explicit dependency injection
+
+### Observable Side Effects:
+1. **Protocol execution** (mocked)
+2. **Trace logging** (mocked)
+3. **Stream events** (observable via async iteration)
+
+### No Hidden Logic:
+- Agent contains no business logic
+- All orchestration delegated to protocol
+- No global state or callbacks
+
+## Blocking Conditions
+
+### Would Block If:
+1. **No test seam** between agent and protocol
+2. **Protocol interface** not mockable
+3. **Async iterator** not observable
+
+### Current Status: ✅ Seams clear, interface mockable, events observable
+
+## Implementation Risks
+
+### 1. Over-engineering Agent
+- **Risk**: Agent contains business logic
+- **Mitigation**: Keep agent under 50 lines of code
+
+### 2. Incorrect Context Format
+- **Risk**: Protocol receives malformed context
+- **Mitigation**: Test verifies context shape precisely
+
+### 3. Stream Not Properly Async
+- **Risk**: Blocking operations in stream
+- **Mitigation**: Use async generators
+
+## Success Criteria
+
+### Tests Must Fail When:
+1. Module doesn't exist
+2. Constructor doesn't accept dependencies
+3. `processStreaming` doesn't return async iterator
+4. Protocol not called or called with wrong context
+5. Events not forwarded
+6. Implementation is placeholder (returns array, empty promise, etc.)
+7. Errors swallowed
+
+### Tests Must Pass When:
+1. Thin wrapper correctly delegates to protocol
+2. Proper async iterator returned
+3. Context correctly formed
+4. Events forwarded unchanged
+5. Errors propagated
+
+## Verification Script
+
+```bash
+# Run tests (should fail in RED phase)
+cd backend && npx jest src/_test_/orion_agent_v2.spec.js
+
+# Expected: 7 failing tests
+# After implementation: 7 passing tests
+```
+
+## Notes
+
+- This CDP ensures agent remains thin wrapper
+- All business logic belongs in protocol
+- Streaming interface is non-negotiable
+- Tests will fail until correct implementation exists

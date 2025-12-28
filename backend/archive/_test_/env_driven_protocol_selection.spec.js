@@ -19,19 +19,14 @@ const request = require('supertest');
 let mockProcessStreaming;
 let mockOrchestrate;
 let mockStreamingService;
+let mockPrepareRequest;
 
 // Mock OrionAgent
 jest.mock('../agents/OrionAgent', () => {
   return jest.fn().mockImplementation(() => ({
     processStreaming: mockProcessStreaming,
     getModelName: jest.fn().mockReturnValue('mock-model'),
-  }));
-});
-
-// Mock TwoStageOrchestrator
-jest.mock('../services/TwoStageOrchestrator', () => {
-  return jest.fn().mockImplementation(() => ({
-    orchestrate: mockOrchestrate,
+    _prepareRequest: mockPrepareRequest,
   }));
 });
 
@@ -55,6 +50,12 @@ describe('P1-F3-T1-S5: Env-driven protocol selection in /api/chat/messages', () 
     // Reset mock functions
     mockProcessStreaming = jest.fn();
     mockOrchestrate = jest.fn();
+    mockPrepareRequest = jest.fn().mockResolvedValue({
+      messages: [
+        { role: 'system', content: 'System prompt' },
+        { role: 'user', content: 'Hello' },
+      ],
+    });
     mockStreamingService = {
       streamFromAdapter: jest.fn(),
       handleSSE: jest.fn(),
@@ -112,9 +113,6 @@ describe('P1-F3-T1-S5: Env-driven protocol selection in /api/chat/messages', () 
 
       // Expect OrionAgent.processStreaming to have been called
       expect(mockProcessStreaming).toHaveBeenCalledTimes(1);
-      // Expect TwoStageOrchestrator NOT to have been instantiated
-      const TwoStageOrchestrator = require('../services/TwoStageOrchestrator');
-      expect(TwoStageOrchestrator).not.toHaveBeenCalled();
       // Expect streamingService.handleSSE to have been called
       expect(mockStreamingService.handleSSE).toHaveBeenCalledTimes(1);
     });
@@ -152,9 +150,6 @@ describe('P1-F3-T1-S5: Env-driven protocol selection in /api/chat/messages', () 
       expect(response.status).toBe(200);
       // Ensure the request completed (handleSSE was called)
       expect(mockStreamingService.handleSSE).toHaveBeenCalledTimes(1);
-      // Optionally, we could assert that the route did something different than standard streaming,
-      // but we don't need to specify the exact mechanism (TwoStageOrchestrator, ProtocolStrategy, etc.)
-      // The test will fail until Devon implements env-driven selection.
     });
   });
 
@@ -179,8 +174,6 @@ describe('P1-F3-T1-S5: Env-driven protocol selection in /api/chat/messages', () 
         });
 
       expect(mockProcessStreaming).toHaveBeenCalledTimes(1);
-      const TwoStageOrchestrator = require('../services/TwoStageOrchestrator');
-      expect(TwoStageOrchestrator).not.toHaveBeenCalled();
     });
 
     test('should ignore invalid TWO_STAGE_ENABLED values', async () => {

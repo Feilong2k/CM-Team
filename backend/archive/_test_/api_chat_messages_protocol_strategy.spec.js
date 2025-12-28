@@ -34,7 +34,7 @@ jest.mock('../agents/OrionAgent', () => {
 });
 
 // Mock TwoStageOrchestrator (legacy, must NOT be used)
-jest.mock('../services/TwoStageOrchestrator', () => {
+jest.mock('../services/TwoStageOrchestrator_DO_NOT_USE', () => {
   return jest.fn().mockImplementation(() => ({
     orchestrate: mockOrchestrate,
   }));
@@ -144,7 +144,7 @@ describe('Feature 3 Architectural Enforcement: /api/chat/messages must use Proto
         });
 
       // CRITICAL ASSERTION: TwoStageOrchestrator must NOT be constructed
-      const TwoStageOrchestrator = require('../services/TwoStageOrchestrator');
+      const TwoStageOrchestrator = require('../services/TwoStageOrchestrator_DO_NOT_USE');
       expect(TwoStageOrchestrator).not.toHaveBeenCalled();
       // Also ensure orchestrate is not called (if somehow instantiated)
       expect(mockOrchestrate).not.toHaveBeenCalled();
@@ -171,7 +171,7 @@ describe('Feature 3 Architectural Enforcement: /api/chat/messages must use Proto
           content: 'Hello',
         });
 
-      const TwoStageOrchestrator = require('../services/TwoStageOrchestrator');
+      const TwoStageOrchestrator = require('../services/TwoStageOrchestrator_DO_NOT_USE');
       expect(TwoStageOrchestrator).not.toHaveBeenCalled();
     });
   });
@@ -274,7 +274,7 @@ describe('Feature 3 Architectural Enforcement: /api/chat/messages must use Proto
         });
 
       expect(mockProcessStreaming).toHaveBeenCalledTimes(1);
-      const TwoStageOrchestrator = require('../services/TwoStageOrchestrator');
+      const TwoStageOrchestrator = require('../services/TwoStageOrchestrator_DO_NOT_USE');
       expect(TwoStageOrchestrator).not.toHaveBeenCalled();
     });
   });

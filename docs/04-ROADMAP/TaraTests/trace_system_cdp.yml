@@ -1,0 +1,242 @@
+# CDP Analysis: Trace System (Backend)
+# Analyst: Tara
+# Date: 2025-12-25
+# Task: Write failing tests for trace_events DB schema, TraceService, and /api/trace/logs route
+
+## A. Atomic Actions
+
+### 1. Database Schema Validation
+- **Behavior**: `trace_events` table exists with correct columns and constraints
+- **Expected Outcome**: Table has all required columns with proper NULL constraints
+- **Risk Level**: High (incorrect schema breaks all tracing)
+- **Tests**: 
+  - `trace_events table exists with required columns`
+  - `timestamp defaults to current time when not specified`
+  - `details column defaults to empty JSON object`
+  - `rejects NULL values for required columns`
+
+### 2. TraceService.logEvent Persistence
+- **Behavior**: Events are written to PostgreSQL with auto-generated ID and timestamp
+- **Expected Outcome**: Events persist across service restarts
+- **Risk Level**: Critical (tracing must be durable)
+- **Tests**:
+  - `TraceService.logEvent persists events to database`
+  - `TraceService.logEvent generates timestamp and ID`
+
+### 3. TraceService.logEvent Validation
+- **Behavior**: Invalid events are rejected (missing fields, invalid enum values)
+- **Expected Outcome**: Clear error messages for invalid input
+- **Risk Level**: Medium (bad data could corrupt trace analysis)
+- **Tests**:
+  - `TraceService.logEvent rejects missing required fields`
+  - `TraceService.logEvent validates source enum values`
+  - `TraceService.logEvent validates type enum values`
+
+### 4. TraceService.getEvents Filtering
+- **Behavior**: Events can be filtered by project, type, and source
+- **Expected Outcome**: Precise filtering for UI consumption
+- **Risk Level**: High (UI depends on accurate filtering)
+- **Tests**:
+  - `TraceService.getEvents filters by projectId`
+  - `TraceService.getEvents supports type and source filters`
+
+### 5. TraceService.getEvents Pagination
+- **Behavior**: Tail-window pagination (most recent events first)
+- **Expected Outcome**: UI can page through events efficiently
+- **Risk Level**: Medium (incorrect pagination breaks UI navigation)
+- **Tests**:
+  - `TraceService.getEvents implements tail-window pagination`
+  - `TraceService.getEvents returns total count with events`
+
+### 6. Always-On Tracing
+- **Behavior**: Tracing cannot be disabled via environment variables
+- **Expected Outcome**: Complete trace coverage in all environments
+- **Risk Level**: High (missing traces hide bugs)
+- **Tests**:
+  - `TraceService is always-on (no environment disabling)`
+
+### 7. /api/trace/logs Route Contract
+- **Behavior**: HTTP route exposes trace data with proper validation
+- **Expected Outcome**: UI can fetch trace events via REST API
+- **Risk Level**: High (UI integration depends on this)
+- **Tests**:
+  - `GET /api/trace/logs requires projectId parameter`
+  - `GET /api/trace/logs returns 200 with correct shape when project exists`
+  - `GET /api/trace/logs forwards type filter to TraceService`
+  - `GET /api/trace/logs forwards source filter to TraceService`
+  - `GET /api/trace/logs implements pagination with limit and offset`
+  - `GET /api/trace/logs returns 500 on TraceService failure`
+  - `GET /api/trace/logs does not return hardcoded responses`
+
+### 8. Phase-Aware Events (Future)
+- **Behavior**: Two-stage protocol events include phase and cycle indices
+- **Expected Outcome**: Trace shows orchestration flow
+- **Risk Level**: Medium (protocol debugging depends on this)
+- **Tests**:
+  - `orchestration_phase_start events include phaseIndex and cycleIndex`
+  - `phase_transition events include previous and next phase details`
+
+## B. Resources Touched
+
+### 1. PostgreSQL Database
+- **Resource Type**: Relational database
+- **Access Pattern**: Write-heavy (logEvent), Read-heavy (getEvents)
+- **Isolation Risks**: Concurrent writes from multiple requests
+
+### 2. TraceService Memory
+- **Resource Type**: Service instance
+- **Access Pattern**: Singleton service
+- **Isolation Risks**: Shared state between requests
+
+### 3. HTTP Route
+- **Resource Type**: REST endpoint
+- **Access Pattern**: Read-only (GET requests)
+- **Isolation Risks**: Rate limiting, authentication
+
+## C. System Physics
+
+### 1. Database Performance
+- **Physical Limits**: Write throughput, index size
+- **Failure Modes**: Slow queries, table bloat
+- **Mitigations**: Proper indexing, connection pooling
+
+### 2. Memory Constraints
+- **Physical Limits**: Event buffering in memory
+- **Failure Modes**: Memory exhaustion
+- **Mitigations**: Stream events directly to DB
+
+### 3. Network Latency
+- **Physical Limits**: DB connection latency
+- **Failure Modes**: Slow trace logging blocks requests
+- **Mitigations**: Async logging, fire-and-forget
+
+## Test Scenario Derivation
+
+### Critical Priority (Must Test)
+1. **Schema Correctness** - Foundation of tracing
+   - Test Type: Integration
+   - Scenario: Verify table structure matches migration
+
+2. **Event Persistence** - Core functionality
+   - Test Type: Integration
+   - Scenario: Verify events survive service restart
+
+3. **Route Contract** - UI integration
+   - Test Type: Integration
+   - Scenario: Verify API shape matches UI expectations
+
+### High Priority (Should Test)
+4. **Filtering & Pagination** - Usability
+   - Test Type: Integration
+   - Scenario: Verify UI can navigate trace history
+
+5. **Validation** - Data quality
+   - Test Type: Unit
+   - Scenario: Verify bad data is rejected
+
+### Medium Priority (Could Test)
+6. **Performance** - Scalability
+   - Test Type: Performance
+   - Scenario: Verify tracing doesn't block main flow
+
+7. **Phase Events** - Protocol integration
+   - Test Type: Integration
+   - Scenario: Verify two-stage protocol tracing
+
+## Security Analysis
+
+### 1. Data Exposure
+- **Risk**: Trace events may contain sensitive data
+- **Mitigation**: Redaction in details field (future)
+
+### 2. SQL Injection
+- **Risk**: User input in filters
+- **Mitigation**: Parameterized queries
+
+### 3. Denial of Service
+- **Risk**: Excessive trace logging
+- **Mitigation**: Rate limiting (future)
+
+## Test Seam Validation
+
+### Clear Seams Exist:
+1. **TraceService ↔ Database**: Direct PostgreSQL queries
+2. **Route ↔ TraceService**: Service dependency injection
+3. **UI ↔ Route**: HTTP REST API
+
+### Observable Side Effects:
+1. **Database writes** (verifiable via direct DB query)
+2. **HTTP responses** (verifiable via supertest)
+3. **Error propagation** (verifiable via status codes)
+
+### No Hidden Logic:
+- TraceService must not cache or buffer events
+- Route must not hardcode responses
+- No environment-based feature flags
+
+## Blocking Conditions
+
+### Would Block If:
+1. **No database connection** for testing
+2. **Migration not run** (table doesn't exist)
+3. **Service cannot be instantiated** in tests
+
+### Current Status: ✅ Seams clear, dependencies mockable
+
+## Implementation Risks
+
+### 1. In-Memory Implementation
+- **Risk**: TraceService stores events in memory instead of DB
+- **Mitigation**: Tests verify persistence across service instances
+
+### 2. Environment-Based Disabling
+- **Risk**: Tracing can be turned off via config
+- **Mitigation**: Tests set disabling env vars and verify tracing still works
+
+### 3. Hardcoded Route Responses
+- **Risk**: Route returns static data instead of querying TraceService
+- **Mitigation**: Tests verify different projects return different results
+
+### 4. Incorrect Pagination Semantics
+- **Risk**: Pagination uses FROM start instead of FROM end
+- **Mitigation**: Tests explicitly define tail-window behavior
+
+## Success Criteria
+
+### Tests Must Fail When:
+1. `trace_events` table doesn't exist or has wrong schema
+2. Events are not persisted to database
+3. Invalid events are silently accepted
+4. Filters are ignored
+5. Pagination uses wrong semantics
+6. Tracing can be disabled via environment
+7. Route returns hardcoded responses
+8. Route doesn't validate required parameters
+
+### Tests Must Pass When:
+1. Schema matches migration exactly
+2. Events are durably stored in PostgreSQL
+3. Validation rejects bad input with clear errors
+4. Filtering works precisely
+5. Pagination returns most recent events first
+6. Tracing works regardless of environment
+7. Route delegates to TraceService correctly
+8. Route returns proper error responses
+
+## Verification Script
+
+```bash
+# Run trace system tests (should fail in RED phase)
+cd backend && npx jest src/_test_/trace_system.spec.js
+
+# Expected: All tests fail (RED phase)
+# After implementation: All tests pass (GREEN phase)
+```
+
+## Notes
+
+- This CDP ensures trace system is production-ready from day one
+- No "debug mode" or "development-only" tracing
+- UI will depend on exact API shape defined in tests
+- Two-stage protocol integration will build on this foundation
+- Performance considerations deferred to later iterations

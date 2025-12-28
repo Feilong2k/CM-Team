@@ -1,0 +1,1 @@
+Hello from DeepSeek FS Probe! This is a test file created using filesystem tools.

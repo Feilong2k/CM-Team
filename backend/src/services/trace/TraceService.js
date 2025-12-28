@@ -1,98 +1,201 @@
-// Minimal TraceService implementation for B2.
-// For now this is an in-memory store so that tools and routes can depend on it
-// without crashing. B2 can later replace this with a DB-backed implementation.
+const { query: dbQuery } = require('../../db/connection');
 
-const { createTraceEventShape } = require('./TraceEvent');
-const { isTraceEnabled } = require('./TraceConfig');
+// Valid source values
+const VALID_SOURCES = ['user', 'orion', 'tool', 'system'];
 
-// In-memory event store (test-only / dev-only for now)
-let events = [];
+// Valid type values
+const VALID_TYPES = [
+  'user_message',
+  'orion_response',
+  'tool_call',
+  'tool_result',
+  'duplicate_tool_call',
+  'llm_call',
+  'system_error',
+  'orchestration_phase_start',
+  'orchestration_phase_end',
+  'phase_transition'
+];
 
 /**
- * Log a TraceEvent.
- * Ensures each event has a stable id and timestamp so UIs can key and select correctly.
- * @param {import('./TraceEvent').TraceEvent} event
+ * Validate event data and throw appropriate errors.
  */
-async function logEvent(event) {
-  // Default OFF
-  if (!isTraceEnabled()) return;
-  if (!event || typeof event !== 'object') return;
-
-  const base = createTraceEventShape();
-  const now = new Date().toISOString();
-  const merged = { ...base, ...event };
-
-  // Ensure a unique id if caller didn't provide one
-  if (!merged.id) {
-    merged.id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+function validateEvent(event) {
+  if (!event.projectId) {
+    throw new Error('Missing required field: projectId');
   }
-
-  // Ensure a string timestamp if caller didn't provide one
-  if (!merged.timestamp) {
-    merged.timestamp = now;
+  if (!event.source) {
+    throw new Error('Missing required field: source');
   }
-
-  events.push(merged);
+  if (!VALID_SOURCES.includes(event.source)) {
+    throw new Error(`Invalid source: ${event.source}. Must be one of: ${VALID_SOURCES.join(', ')}`);
+  }
+  if (!event.type) {
+    throw new Error('Missing required field: type');
+  }
+  if (!VALID_TYPES.includes(event.type)) {
+    throw new Error(`Invalid type: ${event.type}. Must be one of: ${VALID_TYPES.join(', ')}`);
+  }
+  if (!event.summary) {
+    throw new Error('Missing required field: summary');
+  }
 }
 
 /**
- * Get TraceEvents filtered by projectId/type/source with basic pagination.
- * This is a minimal implementation to support early B2 work and tests.
- *
- * @param {Object} filters
- * @param {string} filters.projectId
- * @param {string} [filters.type]
- * @param {string} [filters.source]
- * @param {number} [filters.limit]
- * @param {number} [filters.offset]
- * @returns {Promise<{ events: import('./TraceEvent').TraceEvent[], total: number }>}
+ * Log a trace event to the database.
+ * @param {Object} event - Event data
+ * @returns {Promise<Object>} The inserted event with id and timestamp
  */
-async function getEvents({ projectId, type, source, limit = 50, offset = 0 } = {}) {
-  // If tracing is disabled, behave as empty.
-  if (!isTraceEnabled()) {
-    return { events: [], total: 0 };
+async function logEvent(event) {
+  validateEvent(event);
+
+  // Ensure details is an object (default {})
+  const details = event.details !== undefined ? event.details : {};
+
+  const query = `
+    INSERT INTO trace_events (
+      project_id,
+      source,
+      type,
+      direction,
+      tool_name,
+      request_id,
+      summary,
+      details,
+      error,
+      metadata,
+      phase_index,
+      cycle_index
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    RETURNING *
+  `;
+
+  const values = [
+    event.projectId,
+    event.source,
+    event.type,
+    event.direction || null,
+    event.toolName || null,
+    event.requestId || null,
+    event.summary,
+    JSON.stringify(details),
+    event.error ? JSON.stringify(event.error) : null,
+    event.metadata ? JSON.stringify(event.metadata) : null,
+    event.phaseIndex || null,
+    event.cycleIndex || null
+  ];
+
+  const result = await dbQuery(query, values);
+  const row = result.rows[0];
+
+  // Map column names to camelCase for the returned object
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    projectId: row.project_id,
+    source: row.source,
+    type: row.type,
+    direction: row.direction,
+    toolName: row.tool_name,
+    requestId: row.request_id,
+    summary: row.summary,
+    details: row.details,
+    error: row.error,
+    metadata: row.metadata,
+    phaseIndex: row.phase_index,
+    cycleIndex: row.cycle_index
+  };
+}
+
+/**
+ * Get trace events with filtering and tail-window pagination.
+ * @param {Object} filters - Filter options
+ * @param {string} filters.projectId - Required project ID
+ * @param {string} [filters.type] - Optional type filter
+ * @param {string} [filters.source] - Optional source filter
+ * @param {number} [filters.limit=50] - Maximum number of events to return
+ * @param {number} [filters.offset=0] - Offset from the end (tail window)
+ * @returns {Promise<{events: Array, total: number}>}
+ */
+async function getEvents(filters) {
+  const { projectId, type, source, limit = 50, offset = 0 } = filters;
+
+  if (!projectId) {
+    throw new Error('projectId is required');
   }
 
-  let result = events;
-
-  if (projectId) {
-    result = result.filter((e) => e.projectId === projectId);
-  }
+  // Build WHERE clause
+  const whereConditions = ['project_id = $1'];
+  const params = [projectId];
+  let paramIndex = 2;
 
   if (type) {
-    result = result.filter((e) => e.type === type);
+    whereConditions.push(`type = $${paramIndex}`);
+    params.push(type);
+    paramIndex++;
   }
 
   if (source) {
-    result = result.filter((e) => e.source === source);
+    whereConditions.push(`source = $${paramIndex}`);
+    params.push(source);
+    paramIndex++;
   }
 
-  // Default UX expectation for trace timelines: show the MOST RECENT events.
-  // We keep the returned slice in chronological order (oldest->newest) so the UI
-  // renders a natural timeline, but we window from the tail by default.
-  const total = result.length;
+  const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
-  const limitNum = (limit | 0) || 50;
-  const offsetNum = Math.max(0, offset | 0);
+  // Get total count
+  const countQuery = `SELECT COUNT(*) as total FROM trace_events ${whereClause}`;
+  const countResult = await dbQuery(countQuery, params);
+  const total = parseInt(countResult.rows[0].total, 10);
 
-  // Interpret offset as "offset from the most recent" (tail window), not from the start.
-  // offset=0,limit=50 => last 50
-  // offset=50,limit=50 => prior 50, etc.
-  const end = Math.max(0, total - offsetNum);
-  const start = Math.max(0, end - limitNum);
+  // Tail-window pagination: we need to select events ordered by timestamp DESC,
+  // then apply offset and limit from the end, then reverse to get oldest → newest.
+  // Compute effective offset from start: total - offset - limit
+  // but ensure we don't go negative.
+  const startFrom = Math.max(0, total - offset - limit);
+  const effectiveLimit = Math.min(limit, total - offset);
 
-  return { events: result.slice(start, end), total };
+  let events = [];
+  if (effectiveLimit > 0) {
+    const paginationQuery = `
+      SELECT * FROM trace_events
+      ${whereClause}
+      ORDER BY timestamp ASC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `;
+    const paginationParams = [...params, effectiveLimit, startFrom];
+    const result = await dbQuery(paginationQuery, paginationParams);
+    events = result.rows.map(row => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      projectId: row.project_id,
+      source: row.source,
+      type: row.type,
+      direction: row.direction,
+      toolName: row.tool_name,
+      requestId: row.request_id,
+      summary: row.summary,
+      details: row.details,
+      error: row.error,
+      metadata: row.metadata,
+      phaseIndex: row.phase_index,
+      cycleIndex: row.cycle_index
+    }));
+  }
+
+  return { events, total };
 }
 
-/**
- * Utility for tests to clear the in-memory store.
- */
-function _resetForTests() {
-  events = [];
+// Singleton instance (just the module functions)
+function getInstance() {
+  return {
+    logEvent,
+    getEvents
+  };
 }
 
 module.exports = {
   logEvent,
   getEvents,
-  _resetForTests,
+  getInstance
 };

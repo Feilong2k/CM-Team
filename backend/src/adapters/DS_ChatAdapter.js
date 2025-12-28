@@ -67,8 +67,19 @@ class DS_ChatAdapter extends LLMAdapter {
 
     // Validate each message
     for (const msg of messages) {
-      if (!msg || typeof msg !== 'object' || !msg.role || !msg.content) {
-        throw new Error('Each message must be an object with role and content');
+      if (!msg || typeof msg !== 'object' || !msg.role) {
+        throw new Error('Each message must be an object with a role');
+      }
+      
+      // Allow content to be missing if we have tool_calls (for assistant)
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        continue;
+      }
+      
+      // For other roles, or assistant without tools, content is required
+      // Check for undefined/null specifically to allow empty strings
+      if (msg.content === undefined || msg.content === null) {
+        throw new Error(`Message with role '${msg.role}' must have content`);
       }
     }
 
@@ -80,10 +91,17 @@ class DS_ChatAdapter extends LLMAdapter {
 
     const body = {
       model: this.model,
-      messages: messages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      })),
+      messages: messages.map((msg) => {
+        const m = { role: msg.role };
+        // Content is required for most roles, but can be null/omitted for assistant with tool_calls
+        if (msg.content !== undefined && msg.content !== null) m.content = msg.content;
+        if (msg.tool_calls) m.tool_calls = msg.tool_calls;
+        if (msg.tool_call_id) m.tool_call_id = msg.tool_call_id;
+        if (msg.name) m.name = msg.name;
+        // Include reasoning_content for DeepSeek Reasoner history
+        if (msg.reasoning_content) m.reasoning_content = msg.reasoning_content;
+        return m;
+      }),
       stream,
     };
 
@@ -346,7 +364,7 @@ class DS_ChatAdapter extends LLMAdapter {
   /**
    * Parse the DeepSeek API response to extract the message content and tool calls.
    * @param {Object} apiResponse - The raw response from DeepSeek API
-   * @returns {Object} The extracted message content and tool calls
+   * @returns {Object} The extracted message content, tool calls, and reasoning content
    */
   parseResponse(apiResponse) {
     if (!apiResponse || typeof apiResponse !== 'object') {
@@ -365,8 +383,10 @@ class DS_ChatAdapter extends LLMAdapter {
     const message = firstChoice.message;
     const content = typeof message.content === 'string' ? message.content : '';
     const toolCalls = message.tool_calls || [];
+    // DeepSeek Reasoner specific field
+    const reasoningContent = typeof message.reasoning_content === 'string' ? message.reasoning_content : null;
 
-    return { content, toolCalls };
+    return { content, toolCalls, reasoningContent };
   }
 
   /**

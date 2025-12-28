@@ -1,0 +1,155 @@
+# CDP Analysis: Trace Dashboard Phase 5 UI Behavior
+# Subtask: P1-F2-T1-S6 (Phase 5) - Human-readable trace content with markdown and snippets
+# Analyst: Tara
+# Date: 2025-12-25
+
+## A. Atomic Actions
+
+### 1. Markdown Rendering
+- **Behavior**: Convert textual content in trace details from raw JSON to rendered markdown
+- **Real Outcome**: Users see formatted text (headings, lists, bold, etc.) instead of raw markdown syntax
+- **Risk Level**: Medium
+- **Test Seams**: 
+  - `renderMarkdown` utility function from `frontend/src/utils/markdown.js`
+  - `formattedDetails` computed property in `TraceDashboard.vue`
+  - `formattedPromptContext` computed property in `TraceDashboard.vue`
+
+### 2. Content Snippet Expansion
+- **Behavior**: Show only first ~5 lines of long content with "Show more/less" controls
+- **Real Outcome**: Users can expand/collapse long content sections
+- **Risk Level**: Low
+- **Test Seams**:
+  - UI state for expanded/collapsed sections
+  - Button click handlers for toggling
+  - Conditional rendering based on content length
+
+### 3. Prompt Context Structured Display
+- **Behavior**: Render system prompt and message history in readable format instead of raw JSON
+- **Real Outcome**: Users can easily read conversation context
+- **Risk Level**: Medium
+- **Test Seams**:
+  - Specialized rendering for `systemPrompt` and `messages` fields
+  - Role-based formatting (user/assistant/system)
+
+### 4. RequestId Grouping (Optional)
+- **Behavior**: Group timeline events by requestId with visual indicators
+- **Real Outcome**: Users can see related events grouped together
+- **Risk Level**: Low
+- **Test Seams**:
+  - Timeline grouping logic
+  - Visual separation between groups
+  - RequestId labels/headings
+
+## B. Resources Touched
+
+### 1. Frontend Components
+- **Resource Type**: Vue component (`TraceDashboard.vue`)
+- **Access Pattern**: Read/Write (state updates)
+- **Isolation Risks**: Component state management, reactivity
+
+### 2. Markdown Utility
+- **Resource Type**: JavaScript module (`markdown.js`)
+- **Access Pattern**: Read/Execute (function calls)
+- **Isolation Risks**: XSS protection via sanitization
+
+### 3. DOM Elements
+- **Resource Type**: Browser DOM
+- **Access Pattern**: Read/Write (rendering, event handling)
+- **Isolation Risks**: Performance with long content lists
+
+## C. System Physics
+
+### 1. Performance Constraints
+- **Physical Limits**: Rendering long markdown content could impact performance
+- **Failure Modes**: Slow rendering, UI freezing
+- **Mitigations**: Virtual scrolling, content truncation
+
+### 2. Security Constraints
+- **Physical Limits**: Markdown rendering must prevent XSS
+- **Failure Modes**: Script injection via user content
+- **Mitigations**: Sanitization in `renderMarkdown` function
+
+### 3. UX Constraints
+- **Physical Limits**: Screen real estate for trace details
+- **Failure Modes**: Information overload
+- **Mitigations**: Progressive disclosure (snippets), clear visual hierarchy
+
+## D. Test Scenario Derivation
+
+### Critical Priority
+1. **Security**: Markdown sanitization prevents XSS
+   - Test Type: Security/Unit
+   - CDP Mapping: C.2
+
+2. **Accuracy**: Markdown renders correctly
+   - Test Type: Unit/Integration
+   - CDP Mapping: A.1
+
+### High Priority
+3. **Usability**: Snippet expansion works correctly
+   - Test Type: Integration/E2E
+   - CDP Mapping: A.2
+
+4. **Clarity**: Prompt context is readable
+   - Test Type: Integration
+   - CDP Mapping: A.3
+
+### Medium Priority
+5. **Organization**: RequestId grouping (if implemented)
+   - Test Type: Integration
+   - CDP Mapping: A.4
+
+## E. Anti-Placeholder Validation
+
+### Current Implementation Risks
+- **Raw JSON Display**: Current implementation shows raw JSON in `<pre>` tags
+- **Placeholder Risk**: Tests must fail against current implementation
+- **Validation**: All Phase 5 tests are designed to fail with current code
+
+### Test Seam Verification
+- **Observable Outcomes**: 
+  - Rendered HTML vs raw markdown syntax
+  - Visible "Show more" buttons
+  - Structured prompt context vs JSON
+  - Visual grouping indicators
+- **Placeholder Detection**: Tests check for absence of raw JSON structure
+
+## F. Blocking Conditions
+
+### Must Block If:
+1. Markdown utility cannot be safely integrated (security risk)
+2. Content length detection is unreliable (performance risk)
+3. Vue reactivity breaks with dynamic content expansion
+
+### Can Proceed If:
+1. `renderMarkdown` function is available and secure
+2. Vue component can manage expanded/collapsed state
+3. DOM can handle dynamic content updates
+
+## G. Assumptions & Questions
+
+### Assumptions
+1. `marked` library is already installed and configured with sanitization
+2. Trace event data structure includes `details` and `metadata` fields
+3. Long content is defined as >5 lines of text
+
+### Questions for Clarification
+1. Should snippet behavior apply to all text fields or only specific ones?
+2. What visual style should be used for requestId grouping?
+3. Are there any performance limits for content length?
+
+## H. Implementation Notes
+
+### Test Coverage Requirements
+- [x] Markdown rendering for textual details
+- [x] 5-line snippet with show more/less
+- [x] Prompt context structured format
+- [x] Snippet behavior for prompt context
+- [x] RequestId grouping (optional)
+
+### Success Criteria
+- All Phase 5 tests pass (currently failing in RED phase)
+- No raw JSON visible in UI for textual content
+- Users can expand/collapse long content
+- Prompt context is human-readable
+- Performance remains acceptable with long traces

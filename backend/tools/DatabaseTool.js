@@ -738,6 +738,60 @@ class DatabaseTool {
     }
   }
 
+  /**
+   * Delete a subtask by ID.
+   * This is a destructive operation and should be used with caution.
+   * @param {string|number} subtask_id - Subtask ID (internal or external)
+   * @param {string} reason - Reason for deletion
+   * @returns {Promise<Object>} Deleted subtask info
+   */
+  async delete_subtask(subtask_id, reason = '') {
+    this._checkRole();
+
+    const subtask = await this._findSubtaskByIdOrExternal(subtask_id);
+
+    const client = await db.getPool().connect();
+    try {
+      await client.query('BEGIN');
+
+      // Delete from subtask_activity_logs first (foreign key constraint)
+      await client.query('DELETE FROM subtask_activity_logs WHERE subtask_id = $1', [subtask.id]);
+
+      // Delete the subtask
+      const deleteRes = await client.query(
+        'DELETE FROM subtasks WHERE id = $1 RETURNING *',
+        [subtask.id]
+      );
+
+      if (deleteRes.rows.length === 0) {
+        throw new Error(`Subtask with ID ${subtask_id} not found during deletion`);
+      }
+
+      const deletedSubtask = deleteRes.rows[0];
+
+      await client.query('COMMIT');
+
+      // Unified activity log (using task as parent context since subtask is gone)
+      try {
+        await this._addToActivityLog(
+          'task', 
+          subtask.task_id, 
+          'deletion', 
+          reason || `Deleted subtask ${subtask.external_id} (${subtask.title})`
+        );
+      } catch (logError) {
+        console.error('delete_subtask: Failed to add activity log:', logError.message);
+      }
+
+      return deletedSubtask;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   _checkRole() {
     if (this.role !== 'Orion') {
       throw new Error('DatabaseTool is only accessible to Orion');

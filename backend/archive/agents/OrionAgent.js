@@ -42,7 +42,7 @@ class OrionAgent extends BaseAgent {
       this.db = tools;
     }
 
-    const defaultPromptPath = path.join(__dirname, '../../../docs/01-AGENTS/01-Orion/prompts/SystemPrompt_Orion.md');
+    const defaultPromptPath = path.join(__dirname, '../../../docs/01-AGENTS/01-Orion/prompts/SystemPrompt_Orion_v2.md');
     this.promptPath = promptPath || defaultPromptPath;
 
     try {
@@ -123,11 +123,12 @@ class OrionAgent extends BaseAgent {
     };
 
     try {
-      // Get last 20 chat messages for the project
-      if (this.db.chatMessages && typeof this.db.chatMessages.getMessages === 'function') {
-        context.chatHistory = await this.db.chatMessages.getMessages(projectId, 20);
+      // Get chat history for the project, limit configurable via env (default 20)
+      const historyLimit = parseInt(process.env.CHAT_HISTORY_LIMIT || '20', 10);
+      if (historyLimit > 0 && this.db.chatMessages && typeof this.db.chatMessages.getMessages === 'function') {
+        context.chatHistory = await this.db.chatMessages.getMessages(projectId, historyLimit);
       } else {
-        console.warn('chatMessages.getMessages not available, using empty chat history');
+        console.warn('chatMessages.getMessages not available or historyLimit <= 0, using empty chat history');
       }
 
       // Get list of available files (context building)
@@ -245,6 +246,34 @@ class OrionAgent extends BaseAgent {
     try {
       const { messages, context } = await this._prepareRequest(projectId, userMessage, options);
 
+      // Trace the actual system prompt and messages sent to LLM
+      const systemPrompt = messages[0] && messages[0].role === 'system' ? messages[0].content : null;
+      const safeMessages = messages.map(m => ({
+        role: m.role,
+        content: typeof m.content === 'string' ? (m.content.length > 1000 ? m.content.slice(0, 1000) + '…' : m.content) : ''
+      }));
+
+      try {
+        await TraceService.logEvent({
+          projectId,
+          type: 'llm_call',
+          source: 'orion',
+          timestamp: new Date().toISOString(),
+          summary: `LLM call (non-streaming) – mode=${options.mode || 'plan'}`,
+          details: {
+            systemPrompt: systemPrompt || null,
+            messages: safeMessages,
+            contextMeta: {
+              chatHistoryCount: context.chatHistory?.length || 0,
+              hasSystemState: !!context.systemState,
+            },
+          },
+          requestId: options.requestId,
+        });
+      } catch (traceErr) {
+        console.error('Trace logging failed for llm_call (non-streaming):', traceErr);
+      }
+
       let continueLoop = true;
       let iteration = 0;
       const maxIterations = 5;
@@ -338,18 +367,22 @@ class OrionAgent extends BaseAgent {
    */
   formatSystemPrompt(context, mode) {
     const fileList = context.systemState.files.join('\n');
-    const header = `## Current Session Context\n
-- **Project ID**: ${context.projectId}\n
-- **Mode**: ${mode} (${mode === 'plan' ? 'PLAN mode: Focus on analysis, planning, and high-level guidance.' : 'ACT mode: Focus on concrete implementation, code generation, and execution.'})\n
-- **Chat History**: ${context.chatHistory.length} previous messages available\n
-- **System State**: ${Object.keys(context.systemState).length > 0 ? 'Available' : 'Not available'}\n
-- **Current Time**: ${new Date().toISOString()}\n
+    const header = `## Current Session Context
 
-## Available Context (File List)\n
-The following files are available in the project context. You can use 'read_file' to examine them.\n
-\`\`\`\n
-${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\n
-\`\`\`\n
+- **Project ID**: ${context.projectId}
+- **Mode**: ${mode} (${mode === 'plan' ? 'PLAN mode: Focus on analysis, planning, and high-level guidance.' : 'ACT mode: Focus on concrete implementation, code generation, and execution.'})
+- **Chat History**: ${context.chatHistory.length} previous messages available (including tool results from this session)
+- **Tool Results**: Available in the conversation as system messages with "TOOL RESULT" boxes. Please reference them when appropriate.
+- **System State**: ${Object.keys(context.systemState).length > 0 ? 'Available' : 'Not available'}
+- **Current Time**: ${new Date().toISOString()}
+
+## Available Context (File List)
+The following files are available in the project context. You can use 'read_file' to examine them.
+\`\`\`
+${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}
+\`\`\`
+
+Note: You have access to the full conversation history, including tool results.
 
 `;
 
@@ -360,12 +393,32 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
    * Format chat history for model messages
    */
   formatChatHistory(chatHistory) {
-    return chatHistory.map((msg) => {
-      const rawRole = msg.role || msg.sender;
-      let role = rawRole;
-      if (rawRole === 'orion') role = 'assistant';
-      return { role, content: msg.content };
-    });
+    // chatHistory is from database, ordered by created_at DESC (newest first)
+    // Reverse to chronological order (oldest first) for the LLM
+    const chronological = [...chatHistory].reverse();
+    return chronological
+      .filter((msg) => {
+        const rawRole = msg.role || msg.sender;
+        const content = msg.content || "";
+        // Include all conversation messages (user, assistant/orion)
+        // For system messages: only include tool results (TOOL RESULT boxes), exclude everything else
+        if (rawRole === "system") {
+          // Exclude error logs that start with "Error:" (from logError)
+          if (content.startsWith("Error:")) {
+            return false;
+          }
+          // Only include system messages that contain TOOL RESULT boxes
+          return content.includes("TOOL RESULT");
+        }
+        return true;
+      })
+      .map((msg) => {
+        const rawRole = msg.role || msg.sender;
+        let role = rawRole;
+        if (rawRole === "orion") role = "assistant";
+        // Keep 'user' as 'user', 'orion' as 'assistant', 'system' as 'system'
+        return { role, content: msg.content };
+      });
   }
 
   /**
@@ -391,6 +444,34 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
    */
   async *processStreaming(projectId, userMessage, options = {}) {
     const { messages, context, mode } = await this._prepareRequest(projectId, userMessage, options);
+
+    // Trace the actual system prompt and messages sent to LLM
+    const systemPrompt = messages[0] && messages[0].role === 'system' ? messages[0].content : null;
+    const safeMessages = messages.map(m => ({
+      role: m.role,
+      content: typeof m.content === 'string' ? (m.content.length > 1000 ? m.content.slice(0, 1000) + '…' : m.content) : ''
+    }));
+
+    try {
+      await TraceService.logEvent({
+        projectId,
+        type: 'llm_call',
+        source: 'orion',
+        timestamp: new Date().toISOString(),
+        summary: `LLM call (streaming) – mode=${mode}`,
+        details: {
+          systemPrompt: systemPrompt || null,
+          messages: safeMessages,
+          contextMeta: {
+            chatHistoryCount: context.chatHistory?.length || 0,
+            hasSystemState: !!context.systemState,
+          },
+        },
+        requestId: options.requestId,
+      });
+    } catch (traceErr) {
+      console.error('Trace logging failed for llm_call (streaming):', traceErr);
+    }
 
     // Log tool registration snapshot for streaming session
     try {
@@ -422,6 +503,16 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
       };
     }
 
+    // Helper to get max tool executions (phase cycles) from env
+    const getMaxPhaseCycles = () => {
+      const raw = process.env.MAX_PHASE_CYCLES;
+      if (!raw) return 3; // default
+      const parsed = parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) return 3;
+      const SAFE_MAX = 20;
+      return Math.min(parsed, SAFE_MAX);
+    };
+
     // Build ProtocolExecutionContext for protocol delegation
     const executionContext = new ProtocolExecutionContext({
       messages,
@@ -432,7 +523,7 @@ ${fileList.slice(0, 5000)} ${fileList.length > 5000 ? '\n... (truncated)' : ''}\
       tools: this.tools,
       traceService,
       config: {
-        maxPhaseCycles: parseInt(process.env.MAX_PHASE_CYCLES || '3', 10),
+        maxPhaseCycles: getMaxPhaseCycles(),
         maxDuplicateAttempts: parseInt(process.env.MAX_DUPLICATE_ATTEMPTS || '3', 10),
         debugShowToolResults: process.env.TWO_STAGE_DEBUG === 'true',
       },

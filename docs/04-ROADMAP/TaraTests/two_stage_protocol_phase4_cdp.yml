@@ -1,0 +1,204 @@
+# CDP Analysis: TwoStageProtocol Phase 4 (Full A/B)
+# Subtask: Extend minimal protocol to full A/B form with budgets, duplicate detection, and trace logging
+# Analyst: Tara
+# Date: 2025-12-26
+
+## A. Atomic Actions
+
+### 1. A/B Phase Cycling
+- **Behavior**: Cycle between Action and Tool phases based on tool call detection
+- **Real Outcome**: 
+  - Action phase: Model streams reasoning, may produce tool calls
+  - Tool phase: Execute first complete tool call, inject results
+  - Return to Action phase with updated context
+- **Risk Level**: High
+- **Test Seams**:
+  - ProtocolEventTypes.CHUNK, TOOL_CALLS, DONE events
+  - Tool execution via ToolRunner.executeToolCalls
+  - Phase state tracking (phaseIndex, cycleIndex)
+
+### 2. Budgets & Guards
+- **Behavior**: Enforce limits to prevent infinite loops and resource exhaustion
+- **Real Outcome**:
+  - maxPhaseCycles: Limit total tool execution cycles
+  - maxDuplicateAttempts: Limit duplicate tool call attempts
+  - searchExecutionCount: Limit FileSystemTool_search_files executions per turn
+- **Risk Level**: Medium
+- **Test Seams**:
+  - Config parameter validation
+  - System notice injection as CHUNK events
+  - Early termination with final DONE
+
+### 3. Duplicate Detection via Signatures
+- **Behavior**: Detect and block duplicate tool calls using canonical signatures
+- **Real Outcome**:
+  - Path-only signatures for read/write operations
+  - Canonicalized signatures for list/search with normalized parameters
+  - Generic JSON fallback for other tools
+- **Risk Level**: Medium
+- **Test Seams**:
+  - ToolRunner.buildCanonicalSignature calls
+  - Blocked signatures tracking
+  - Duplicate refusal messages
+
+### 4. Phase-Aware Trace Logging
+- **Behavior**: Log orchestration events to TraceService for observability
+- **Real Outcome**:
+  - orchestration_phase_start/end with phaseIndex, cycleIndex
+  - phase_transition events with fromPhase/toPhase and outputs
+  - requestId propagation across all trace events
+- **Risk Level**: Low
+- **Test Seams**:
+  - TraceService.logEvent calls
+  - Error handling (don't crash on trace failures)
+  - Event payload structure validation
+
+## B. Resources Touched
+
+### 1. TwoStageProtocol
+- **Resource Type**: Protocol implementation
+- **Access Pattern**: Read/Execute (orchestration logic)
+- **Isolation Risks**: State management, phase transitions
+
+### 2. ToolRunner
+- **Resource Type**: Tool execution service
+- **Access Pattern**: Execute (tool calls)
+- **Isolation Risks**: Tool registry, execution context
+
+### 3. TraceService
+- **Resource Type**: Logging service
+- **Access Pattern**: Write (trace events)
+- **Isolation Risks**: Database connectivity, event validation
+
+### 4. Adapter Interface
+- **Resource Type**: LLM adapter
+- **Access Pattern**: Read/Execute (streaming)
+- **Isolation Risks**: Streaming protocol, event format
+
+### 5. Tool Registry
+- **Resource Type**: Tool implementations
+- **Access Pattern**: Read/Execute (via ToolRunner)
+- **Isolation Risks**: Tool availability, interface compatibility
+
+## C. System Physics
+
+### 1. Streaming Performance
+- **Physical Limits**: Memory usage for streaming buffers
+- **Failure Modes**: Memory exhaustion, stream corruption
+- **Mitigations**: Proper async iteration, backpressure handling
+
+### 2. Tool Execution Latency
+- **Physical Limits**: Network/IO latency for tool calls
+- **Failure Modes**: Timeouts, partial failures
+- **Mitigations**: Timeout handling, error recovery
+
+### 3. Trace Database
+- **Physical Limits**: Database connection pool, write throughput
+- **Failure Modes**: Connection failures, write timeouts
+- **Mitigations**: Async logging, error swallowing for non-critical traces
+
+## D. Test Scenario Derivation
+
+### Critical Priority
+1. **A/B Phase Cycling**: Action → Tool → Action flow
+   - Test Type: Integration
+   - CDP Mapping: A.1
+
+2. **Budget Enforcement**: maxPhaseCycles, maxDuplicateAttempts
+   - Test Type: Integration
+   - CDP Mapping: A.2
+
+### High Priority
+3. **Duplicate Detection**: Path-only and canonical signatures
+   - Test Type: Integration
+   - CDP Mapping: A.3
+
+4. **Trace Logging**: Phase events and transitions
+   - Test Type: Integration
+   - CDP Mapping: A.4
+
+### Medium Priority
+5. **Search Execution Limit**: MAX_SEARCH_EXECUTIONS_PER_TURN
+   - Test Type: Integration
+   - CDP Mapping: A.2
+
+6. **Error Resilience**: TraceService failures
+   - Test Type: Integration
+   - CDP Mapping: A.4
+
+## E. Anti-Placeholder Validation
+
+### Current Implementation Gaps
+- **Minimal Protocol**: Only forwards events, no tool execution
+- **Missing Features**:
+  - No phase cycling (single pass only)
+  - No budget enforcement
+  - No duplicate detection
+  - No trace logging
+  - No tool execution
+
+### Test Seam Verification
+- **Observable Outcomes**:
+  - ToolRunner.executeToolCalls calls
+  - TraceService.logEvent calls with specific event types
+  - System notice CHUNK events for budget enforcement
+  - Blocked duplicate tool calls
+- **Placeholder Detection**: Tests check for:
+  - Actual tool execution (not just forwarding)
+  - Budget limit enforcement
+  - Duplicate signature detection
+  - Phase-aware trace events
+  - Error handling resilience
+
+## F. Blocking Conditions
+
+### Must Block If:
+1. ToolRunner.executeToolCalls interface changes
+2. TraceService.logEvent interface changes
+3. ProtocolEventTypes are incomplete or unstable
+4. Adapter streaming interface cannot support phase cycling
+
+### Can Proceed If:
+1. ToolRunner provides stable executeToolCalls API
+2. TraceService provides stable logEvent API
+3. ProtocolEventTypes are stable and complete
+4. Adapter supports streaming with tool calls
+
+## G. Assumptions & Questions
+
+### Assumptions
+1. ToolRunner.executeToolCalls returns structured results
+2. TraceService accepts orchestration_phase_start/end and phase_transition events
+3. ProtocolExecutionContext includes config with budget parameters
+4. Adapter streams support TOOL_CALLS events
+5. Tool signatures use ToolRunner.buildCanonicalSignature
+
+### Questions for Clarification
+1. Should search execution limit be configurable per request or global?
+2. What should happen when all budgets are exhausted simultaneously?
+3. Should duplicate detection consider tool call arguments beyond signatures?
+4. What trace event details are required for phase transitions?
+
+## H. Implementation Notes
+
+### Test Coverage Requirements
+- [x] A/B phase cycling with tool execution
+- [x] maxPhaseCycles budget enforcement
+- [x] maxDuplicateAttempts guard
+- [x] searchExecutionCount guard
+- [x] Path-only duplicate detection
+- [x] Canonical signature duplicate detection
+- [x] orchestration_phase_start/end trace events
+- [x] phase_transition trace events
+- [x] requestId propagation
+- [x] TraceService error resilience
+- [x] Anti-placeholder validation
+
+### Success Criteria
+- All tests fail in RED phase (current minimal implementation)
+- Tests will pass when Devon implements full Phase 4 behavior
+- Protocol cycles between Action and Tool phases correctly
+- Budgets are enforced with system notices
+- Duplicates are detected and blocked
+- Phase-aware trace events are logged
+- No crashes on trace service failures

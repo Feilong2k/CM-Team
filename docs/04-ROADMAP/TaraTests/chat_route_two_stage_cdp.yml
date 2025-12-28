@@ -1,0 +1,199 @@
+# CDP Analysis: Chat Route with TwoStageProtocol (Step 5)
+# Subtask: Wire minimal TwoStageProtocol through the chat route
+# Analyst: Tara
+# Date: 2025-12-26
+
+## A. Atomic Actions
+
+### 1. Route Wiring to OrionAgentV2 + TwoStageProtocol
+- **Behavior**: Construct OrionAgentV2 with TwoStageProtocol when POST /api/chat/messages
+- **Real Outcome**: Route uses new architecture (OrionAgentV2 → TwoStageProtocol → adapter)
+- **Risk Level**: Medium
+- **Test Seams**: 
+  - OrionAgentV2 constructor calls
+  - TwoStageProtocol instantiation
+  - Adapter factory usage
+  - Protocol.getName() verification
+
+### 2. SSE Streaming Contract
+- **Behavior**: Return Server-Sent Events with proper headers and event format
+- **Real Outcome**: Frontend receives streaming responses via SSE
+- **Risk Level**: High
+- **Test Seams**:
+  - Response headers (Content-Type: text/event-stream)
+  - Event format (data: {...}\n\n)
+  - Multiple chunk events + single done event
+  - No buffering to single JSON response
+
+### 3. Minimal Integration with TwoStageProtocol
+- **Behavior**: Forward adapter stream through TwoStageProtocol to SSE
+- **Real Outcome**: Adapter events appear as SSE events
+- **Risk Level**: Medium
+- **Test Seams**:
+  - Adapter.sendMessagesStreaming() calls
+  - Protocol event conversion (CHUNK, TOOL_CALLS, DONE)
+  - Tool call forwarding (no execution)
+  - Event sequence preservation
+
+### 4. Error Handling & Validation
+- **Behavior**: Validate input, handle errors gracefully
+- **Real Outcome**: Clear error responses for invalid requests
+- **Risk Level**: Low
+- **Test Seams**:
+  - Required field validation (projectId, message)
+  - Error status codes (400, 500)
+  - SSE error handling mid-stream
+  - Invalid mode parameter handling
+
+## B. Resources Touched
+
+### 1. Express Route
+- **Resource Type**: HTTP endpoint (/api/chat/messages)
+- **Access Pattern**: Read/Write (request/response)
+- **Isolation Risks**: Route dependency injection, middleware
+
+### 2. OrionAgentV2
+- **Resource Type**: Agent orchestration layer
+- **Access Pattern**: Read/Execute (processStreaming)
+- **Isolation Risks**: Constructor dependencies, protocol delegation
+
+### 3. TwoStageProtocol
+- **Resource Type**: Protocol implementation
+- **Access Pattern**: Read/Execute (executeStreaming)
+- **Isolation Risks**: Adapter interface, event conversion
+
+### 4. Adapter Factory
+- **Resource Type**: LLM adapter provider
+- **Access Pattern**: Read/Execute (createAdapter)
+- **Isolation Risks**: Adapter selection, configuration
+
+### 5. Tool Registry
+- **Resource Type**: Tool function map
+- **Access Pattern**: Read-only (reference)
+- **Isolation Risks**: Tool interface compatibility
+
+### 6. Trace Service
+- **Resource Type**: Logging service
+- **Access Pattern**: Write (event logging)
+- **Isolation Risks**: Trace event format
+
+## C. System Physics
+
+### 1. SSE Connection Management
+- **Physical Limits**: Concurrent SSE connections, memory usage
+- **Failure Modes**: Connection drops, memory exhaustion
+- **Mitigations**: Proper connection closing, error handling
+
+### 2. Streaming Performance
+- **Physical Limits**: Event throughput, network latency
+- **Failure Modes**: Buffer overflow, event loss
+- **Mitigations**: Backpressure handling, proper async iteration
+
+### 3. Adapter Interface Stability
+- **Physical Limits**: Adapter event format changes
+- **Failure Modes**: Event type mismatch
+- **Mitigations**: Interface contracts, adapter abstraction
+
+## D. Test Scenario Derivation
+
+### Critical Priority
+1. **Route Wiring**: Uses OrionAgentV2 + TwoStageProtocol
+   - Test Type: Integration
+   - CDP Mapping: A.1
+
+2. **SSE Contract**: Proper headers and event format
+   - Test Type: Integration
+   - CDP Mapping: A.2
+
+### High Priority
+3. **Stream Integration**: Adapter events → Protocol → SSE
+   - Test Type: Integration
+   - CDP Mapping: A.3
+
+4. **Input Validation**: Required fields, error responses
+   - Test Type: Unit/Integration
+   - CDP Mapping: A.4
+
+### Medium Priority
+5. **Tool Call Forwarding**: Tool calls as SSE events (no execution)
+   - Test Type: Integration
+   - CDP Mapping: A.3
+
+6. **Error Handling**: Mid-stream failures, invalid parameters
+   - Test Type: Integration
+   - CDP Mapping: A.4
+
+## E. Anti-Placeholder Validation
+
+### Current Implementation Risks
+- **Route Not Implemented**: Current route returns 501 Not Implemented
+- **Placeholder Risk**: Tests must fail against any implementation that:
+  - Bypasses OrionAgentV2 and TwoStageProtocol
+  - Returns non-streaming JSON response
+  - Doesn't set SSE headers
+  - Buffers everything to single response
+  - Uses archived/legacy agent code
+
+### Test Seam Verification
+- **Observable Outcomes**: 
+  - OrionAgentV2 constructor calls
+  - TwoStageProtocol instantiation
+  - SSE headers and event format
+  - Adapter method calls
+  - Error status codes for invalid input
+- **Placeholder Detection**: Tests check for:
+  - Real OrionAgentV2 usage (not mocks in production)
+  - Actual SSE streaming (not buffered JSON)
+  - Protocol event conversion
+  - Input validation
+
+## F. Blocking Conditions
+
+### Must Block If:
+1. OrionAgentV2 or TwoStageProtocol interfaces are unstable
+2. Adapter factory cannot provide streaming adapters
+3. Express SSE implementation has known issues
+4. Environment variables (PORT, CORS_ORIGIN_REGEX) cannot be configured for tests
+
+### Can Proceed If:
+1. OrionAgentV2 and TwoStageProtocol are stable and tested
+2. Adapter factory provides sendMessagesStreaming() interface
+3. Express can handle SSE connections
+4. Test environment can be configured properly
+
+## G. Assumptions & Questions
+
+### Assumptions
+1. OrionAgentV2 constructor: `({ adapter, tools, traceService, protocol })`
+2. TwoStageProtocol constructor: `({ adapter, tools, traceService })`
+3. Adapter interface: `sendMessagesStreaming(messages, options)` → AsyncIterable
+4. Frontend expects SSE format: `data: {...}\n\n`
+5. Required request fields: `projectId`, `message` (optional: `mode`)
+
+### Questions for Clarification
+1. Should the route support both streaming and non-streaming responses?
+2. What error format should be returned for validation errors?
+3. Are there any CORS or authentication requirements?
+4. Should requestId be generated by route or agent?
+
+## H. Implementation Notes
+
+### Test Coverage Requirements
+- [x] Route wiring to OrionAgentV2 + TwoStageProtocol
+- [x] SSE headers and contract
+- [x] Multiple event streaming
+- [x] Single done event at end
+- [x] Adapter stream integration
+- [x] Tool call forwarding (no execution)
+- [x] Input validation (projectId, message)
+- [x] Error handling (400, 500)
+- [x] Mode parameter handling
+- [x] Anti-placeholder validation
+
+### Success Criteria
+- All tests fail in RED phase (route returns 501)
+- Tests will pass when Devon implements route with TwoStageProtocol
+- Route uses OrionAgentV2 → TwoStageProtocol → adapter chain
+- Proper SSE streaming with headers
+- Input validation and error handling
+- No use of archived/legacy code

@@ -1,4 +1,4 @@
-const { ProtocolStrategy, ProtocolExecutionContext, ProtocolEventTypes } = require('../../../archive/agents/protocols/ProtocolStrategy');
+const { ProtocolStrategy, ProtocolExecutionContext, ProtocolEventTypes } = require('./ProtocolStrategy');
 const ToolRunner = require('../../../tools/ToolRunner');
 const functionDefinitions = require('../../../tools/functionDefinitions');
 
@@ -39,45 +39,15 @@ class TwoStageProtocol extends ProtocolStrategy {
   }
 
   /**
-   * Safe trace logger helper
-   * @private
-   */
-  async _logTrace(traceService, event) {
-    if (!traceService || typeof traceService.logEvent !== 'function') {
-      return;
-    }
-    try {
-      const result = traceService.logEvent(event);
-      // If the result is a Promise, wait for it, otherwise ignore.
-      if (result && typeof result.then === 'function') {
-        await result;
-      }
-    } catch (err) {
-      // Do not crash protocol on trace errors
-      console.error('TraceService.logEvent failed:', err.message || err);
-    }
-  }
-
-  /**
    * Execute the protocol with streaming support
    * @param {ProtocolExecutionContext} executionContext - Precise execution context
    * @returns {AsyncGenerator<ProtocolEvent>} Stream of protocol events
    */
   async *executeStreaming(executionContext) {
-    console.log('TwoStageProtocol: enter executeStreaming');
     const { config } = executionContext;
     const maxPhaseCycles = config.maxPhaseCycles || 3;
     const maxDuplicateAttempts = config.maxDuplicateAttempts || 3;
     const debugShowToolResults = !!config.debugShowToolResults;
-    const traceService = this.traceService || executionContext.traceService;
-    // Determine if we're in minimal slice mode (default config with no overrides)
-    const defaultConfig = { maxPhaseCycles: 3, maxDuplicateAttempts: 3, debugShowToolResults: false };
-    const isMinimalMode = Object.keys(config).length === 3 &&
-      config.maxPhaseCycles === 3 &&
-      config.maxDuplicateAttempts === 3 &&
-      config.debugShowToolResults === false &&
-      !config.MAX_SEARCH_EXECUTIONS_PER_TURN;
-    console.log('TwoStageProtocol: isMinimalMode', isMinimalMode);
 
     // Internal state
     const state = {
@@ -85,10 +55,15 @@ class TwoStageProtocol extends ProtocolStrategy {
       cycleIndex: 0,
       blockedSignatures: new Set(),
       duplicateAttemptCount: 0,
-      searchExecutionCount: 0,
       currentMessages: [...executionContext.messages],
       doneEmitted: false,
-      finalContent: ''
+      finalContent: '',
+      searchExecutionCount: 0, // NEW: Cap for search executions per turn
+    };
+
+    // Helper to emit phase events
+    const emitPhase = function*(phase, index) {
+      yield { type: ProtocolEventTypes.PHASE, phase, index };
     };
 
     // Helper to inject system message
@@ -98,54 +73,12 @@ class TwoStageProtocol extends ProtocolStrategy {
 
     // Main orchestration loop
     while (state.cycleIndex < maxPhaseCycles && !state.doneEmitted) {
-      console.log('TwoStageProtocol: loop start', { phaseIndex: state.phaseIndex, cycleIndex: state.cycleIndex });
-      // Action Phase Start
-      await this._logTrace(traceService, {
-        projectId: executionContext.projectId,
-        requestId: executionContext.requestId,
-        source: 'system',
-        type: 'orchestration_phase_start',
-        details: {
-          phase: 'action',
-          phaseIndex: state.phaseIndex,
-          cycleIndex: state.cycleIndex
-        }
-      });
-
-      // Delegate to _runActionPhase with logging
-      const actionPhaseGen = this._runActionPhase(state, executionContext, isMinimalMode);
-      let actionPhaseResult = null;
-      while (true) {
-        const { value, done } = await actionPhaseGen.next();
-        if (done) {
-          actionPhaseResult = value;
-          break;
-        }
-        console.log('TwoStageProtocol: outer generator yielding', value);
-        yield value;
-      }
+      // Action Phase
+      yield* emitPhase('action', state.phaseIndex);
+      const actionPhaseResult = yield* this._runActionPhase(state, executionContext);
       
-      // Action Phase End
-      await this._logTrace(traceService, {
-        projectId: executionContext.projectId,
-        requestId: executionContext.requestId,
-        source: 'system',
-        type: 'orchestration_phase_end',
-        details: {
-          phase: 'action',
-          phaseIndex: state.phaseIndex,
-          cycleIndex: state.cycleIndex,
-          reason: actionPhaseResult.done
-            ? 'completed'
-            : (actionPhaseResult.toolCalls && actionPhaseResult.toolCalls.length > 0)
-              ? 'tool_calls_produced'
-              : 'no_tools'
-        }
-      });
-
       if (actionPhaseResult.done) {
         // Final answer produced
-        console.log('TwoStageProtocol: outer generator yielding DONE', actionPhaseResult.fullContent);
         yield { type: ProtocolEventTypes.DONE, fullContent: actionPhaseResult.fullContent };
         state.doneEmitted = true;
         state.finalContent = actionPhaseResult.fullContent;
@@ -155,62 +88,15 @@ class TwoStageProtocol extends ProtocolStrategy {
       state.phaseIndex++;
       
       if (actionPhaseResult.toolCalls && actionPhaseResult.toolCalls.length > 0) {
-        // Transition Action → Tool
-        await this._logTrace(traceService, {
-          projectId: executionContext.projectId,
-          requestId: executionContext.requestId,
-          source: 'system',
-          type: 'phase_transition',
-          details: {
-            fromPhase: 'action',
-            toPhase: 'tool',
-            phaseIndex: state.phaseIndex - 1, // previous phase index
-            cycleIndex: state.cycleIndex,
-            outputs: {
-              toolCalls: actionPhaseResult.toolCalls || []
-            }
-          }
-        });
-
-        // Tool Phase Start
-        await this._logTrace(traceService, {
-          projectId: executionContext.projectId,
-          requestId: executionContext.requestId,
-          source: 'system',
-          type: 'orchestration_phase_start',
-          details: {
-            phase: 'tool',
-            phaseIndex: state.phaseIndex,
-            cycleIndex: state.cycleIndex
-          }
-        });
-
+        // Tool Phase
+        yield* emitPhase('tool', state.phaseIndex);
         const toolPhaseResult = yield* this._runToolPhase(
           actionPhaseResult.toolCalls,
           state,
           executionContext,
           debugShowToolResults,
-          injectSystemMessage,
-          isMinimalMode
+          injectSystemMessage
         );
-
-        // Tool Phase End
-        await this._logTrace(traceService, {
-          projectId: executionContext.projectId,
-          requestId: executionContext.requestId,
-          source: 'system',
-          type: 'orchestration_phase_end',
-          details: {
-            phase: 'tool',
-            phaseIndex: state.phaseIndex,
-            cycleIndex: state.cycleIndex,
-            reason: toolPhaseResult.executed
-              ? 'executed'
-              : toolPhaseResult.duplicateExceeded
-                ? 'duplicate_exceeded'
-                : 'malformed_or_skipped'
-          }
-        });
 
         if (toolPhaseResult.duplicateExceeded) {
           // Too many duplicate attempts, force final answer
@@ -228,25 +114,6 @@ class TwoStageProtocol extends ProtocolStrategy {
             }
           }
           break;
-        }
-
-        // Transition Tool → Action (if tool executed)
-        if (toolPhaseResult.executed) {
-          await this._logTrace(traceService, {
-            projectId: executionContext.projectId,
-            requestId: executionContext.requestId,
-            source: 'system',
-            type: 'phase_transition',
-            details: {
-              fromPhase: 'tool',
-              toPhase: 'action',
-              phaseIndex: state.phaseIndex,
-              cycleIndex: state.cycleIndex,
-              outputs: {
-                toolResults: [{ executed: true }] // simplified
-              }
-            }
-          });
         }
 
         // Only increment cycle index when a tool was actually executed
@@ -293,8 +160,7 @@ class TwoStageProtocol extends ProtocolStrategy {
    * Run action phase (model streams reasoning)
    * @private
    */
-  async *_runActionPhase(state, executionContext, isMinimalMode = false) {
-    console.log('TwoStageProtocol: enter _runActionPhase');
+  async *_runActionPhase(state, executionContext) {
     const result = {
       toolCalls: [],
       done: false,
@@ -310,7 +176,6 @@ class TwoStageProtocol extends ProtocolStrategy {
     let hasCompleteToolCall = false;
 
     for await (const event of adapterStream) {
-      console.log('TwoStageProtocol: _runActionPhase saw event', event);
       if (event.type === ProtocolEventTypes.TOOL_CALLS && event.calls) {
         // Merge tool calls (handles partial streaming)
         this._mergeToolCallsIntoMap(toolCallMap, event.calls);
@@ -323,25 +188,14 @@ class TwoStageProtocol extends ProtocolStrategy {
         const completeToolCall = this._findFirstCompleteToolCall(result.toolCalls);
         if (completeToolCall) {
           hasCompleteToolCall = true;
-          // In minimal mode, forward the original event's calls (not merged) to preserve separate events
-          if (isMinimalMode) {
-            yield { type: ProtocolEventTypes.TOOL_CALLS, calls: event.calls };
-          } else {
-            // Forward merged tool calls for UI visibility
-            yield { type: ProtocolEventTypes.TOOL_CALLS, calls: result.toolCalls };
-            // Stop processing further events - action phase ends when complete tool call detected
-            break;
-          }
-        } else {
-          // No complete tool call yet
-          if (isMinimalMode) {
-            // Forward the original event's calls (not merged)
-            yield { type: ProtocolEventTypes.TOOL_CALLS, calls: event.calls };
-          } else {
-            // Forward merged tool calls for UI visibility
-            yield { type: ProtocolEventTypes.TOOL_CALLS, calls: result.toolCalls };
-          }
+          // Forward tool calls for UI visibility
+          yield { type: ProtocolEventTypes.TOOL_CALLS, calls: result.toolCalls };
+          // Stop processing further events - action phase ends when complete tool call detected
+          break;
         }
+        
+        // Forward tool calls for UI visibility
+        yield { type: ProtocolEventTypes.TOOL_CALLS, calls: result.toolCalls };
         continue;
       }
 
@@ -352,7 +206,6 @@ class TwoStageProtocol extends ProtocolStrategy {
       }
 
       if (event.type === ProtocolEventTypes.CHUNK && event.content) {
-        console.log('TwoStageProtocol: _runActionPhase yielding CHUNK', event.content);
         yield { type: ProtocolEventTypes.CHUNK, content: event.content };
         if (pendingDoneEvent && pendingDoneEvent.fullContent) {
           result.fullContent += event.content;
@@ -361,12 +214,11 @@ class TwoStageProtocol extends ProtocolStrategy {
     }
 
     // If we have a complete tool call, action phase ends (don't process done event)
-    // Unless we're in minimal mode, where we treat tool calls as part of the stream
-    if (hasCompleteToolCall && !isMinimalMode) {
+    if (hasCompleteToolCall) {
       return result;
     }
 
-    // Process pending done event (no complete tool call found, or minimal mode)
+    // Process pending done event (no complete tool call found)
     if (pendingDoneEvent) {
       result.done = true;
       result.fullContent = pendingDoneEvent.fullContent || result.fullContent;
@@ -379,7 +231,7 @@ class TwoStageProtocol extends ProtocolStrategy {
    * Run tool phase (execute first complete tool call)
    * @private
    */
-  async *_runToolPhase(toolCalls, state, executionContext, debugShowToolResults, injectSystemMessage, isMinimalMode = false) {
+  async *_runToolPhase(toolCalls, state, executionContext, debugShowToolResults, injectSystemMessage) {
     const result = {
       executed: false,
       duplicateExceeded: false
@@ -394,51 +246,42 @@ class TwoStageProtocol extends ProtocolStrategy {
       return result;
     }
 
-    // In minimal mode, we don't execute tools, just return without side effects
-    if (isMinimalMode) {
-      return result;
-    }
-
-    // Determine tool name and search limit
+    // NEW: Search cap check
     const fnName = completeToolCall.function?.name;
-    const maxSearch = executionContext.config.MAX_SEARCH_EXECUTIONS_PER_TURN || Infinity;
-    const isSearch = fnName === 'FileSystemTool_search_files';
-
-    // Handle search limit before duplicate detection
-    if (isSearch && state.searchExecutionCount >= maxSearch) {
-      // Search limit reached
-      const notice = 'Search limit reached for this turn. Use existing search results to proceed.';
-      injectSystemMessage(notice);
-      yield { type: ProtocolEventTypes.CHUNK, content: `\n\n**System Notice**: ${notice}\n\n` };
-      return result;
+    if (fnName === 'FileSystemTool_search_files') {
+      const MAX_SEARCH_EXECUTIONS_PER_TURN = 3;
+      if (state.searchExecutionCount >= MAX_SEARCH_EXECUTIONS_PER_TURN) {
+        const notice = 'Search limit reached for this turn. Use existing search results to proceed.';
+        injectSystemMessage(notice);
+        yield { type: ProtocolEventTypes.CHUNK, content: `\n\n**System Notice**: ${notice}\n\n` };
+        return result; // do not execute tool again
+      }
     }
 
-    // For non-search tools, apply duplicate detection
-    if (!isSearch) {
-      const signature = this._computeToolSignature(completeToolCall, executionContext.projectId);
+    // Check for duplicates
+    const signature = this._computeToolSignature(completeToolCall, executionContext.projectId);
+    
+    // Handle null signature (malformed tool call)
+    if (signature === null) {
+      injectSystemMessage('Tool call malformed (cannot compute signature). Continue reasoning.');
+      yield { type: ProtocolEventTypes.CHUNK, content: '\n\n**System Notice**: Tool call malformed. Continue reasoning.\n\n' };
+      return result;
+    }
+    
+    if (state.blockedSignatures.has(signature)) {
+      state.duplicateAttemptCount++;
       
-      // Handle null signature (malformed tool call)
-      if (signature === null) {
-        injectSystemMessage('Tool call malformed (cannot compute signature). Continue reasoning.');
-        yield { type: ProtocolEventTypes.CHUNK, content: '\n\n**System Notice**: Tool call malformed. Continue reasoning.\n\n' };
+      const maxDuplicateAttempts = executionContext.config.maxDuplicateAttempts || 3;
+      if (state.duplicateAttemptCount >= maxDuplicateAttempts) {
+        result.duplicateExceeded = true;
         return result;
       }
-      
-      if (state.blockedSignatures.has(signature)) {
-        state.duplicateAttemptCount++;
-        
-        const maxDuplicateAttempts = executionContext.config.maxDuplicateAttempts || 3;
-        if (state.duplicateAttemptCount >= maxDuplicateAttempts) {
-          result.duplicateExceeded = true;
-          return result;
-        }
 
-        // Inject refusal message
-        const refusalMessage = `Duplicate tool call detected (already executed in this turn). Do NOT call this tool again. Use previous results.`;
-        injectSystemMessage(refusalMessage);
-        yield { type: ProtocolEventTypes.CHUNK, content: `\n\n**System Notice**: ${refusalMessage}\n\n` };
-        return result;
-      }
+      // Inject refusal message
+      const refusalMessage = `Duplicate tool call detected (already executed in this turn). Do NOT call this tool again. Use previous results.`;
+      injectSystemMessage(refusalMessage);
+      yield { type: ProtocolEventTypes.CHUNK, content: `\n\n**System Notice**: ${refusalMessage}\n\n` };
+      return result;
     }
 
     // Execute tool
@@ -448,47 +291,84 @@ class TwoStageProtocol extends ProtocolStrategy {
       { projectId: executionContext.projectId, requestId: executionContext.requestId }
     );
 
-    // Block signature for non-search tools to prevent future duplicates
-    if (!isSearch) {
-      const signature = this._computeToolSignature(completeToolCall, executionContext.projectId);
-      if (signature !== null) {
-        state.blockedSignatures.add(signature);
+    // Block this signature to prevent future duplicates
+    state.blockedSignatures.add(signature);
+
+      // Process tool result
+      if (toolResults.length > 0) {
+        const toolResult = toolResults[0];
+        
+        // Format tool result for injection
+        const toolLabel = toolResult.toolName || 'tool';
+        const payload = toolResult.success
+          ? { ok: true, result: toolResult.result }
+          : {
+              ok: false,
+              error: toolResult.error || 'Unknown tool error',
+              details: toolResult.details || null
+            };
+
+        const resultJson = JSON.stringify(payload, null, 2);
+        const boxed = this._formatToolResultBox(toolLabel, resultJson);
+        
+        // Inject as system message
+        injectSystemMessage(boxed);
+        
+        // Emit to stream only if debug mode is enabled
+        if (debugShowToolResults) {
+          yield { type: ProtocolEventTypes.CHUNK, content: `\n\n${boxed}\n\n` };
+        }
+
+        // Custom success guidance based on tool
+        let successGuidance = '';
+        if (toolResult.success) {
+          if (fnName === 'FileSystemTool_write_to_file') {
+            // Extract path from tool call arguments
+            let path = 'the file';
+            try {
+              const args = JSON.parse(completeToolCall.function?.arguments || '{}');
+              if (args.path) {
+                path = `\`${args.path}\``;
+              }
+            } catch {}
+            successGuidance = `You have successfully created/updated ${path}. Tell the user this and do not call tools again this turn.`;
+          } else if (fnName === 'FileSystemTool_read_file') {
+            // Special guidance for read_file: the content is in the TOOL RESULT box above.
+            let path = 'the file';
+            try {
+              const args = JSON.parse(completeToolCall.function?.arguments || '{}');
+              if (args.path) {
+                path = `\`${args.path}\``;
+              }
+            } catch {}
+            successGuidance = `You have successfully read ${path}. The file content is displayed in the TOOL RESULT box above. Use that content to answer the user's request. Do not ask to read the same file again.`;
+          } else {
+            successGuidance = [
+              `Tool ${toolLabel} executed successfully.`,
+              'The result is shown above in the TOOL RESULT box.',
+              'Use this result as ground truth for your next reasoning step.',
+              'Do not call this same tool again with the same target in this turn.',
+              'Ignore the tool call deduplication protocol for this result; the tool has already been executed.',
+            ].join(' ');
+          }
+        } else {
+          // Tool failed - provide error guidance
+          successGuidance = `Tool ${toolLabel} failed: ${toolResult.error || 'Unknown error'}. Adjust your plan accordingly. Do not attempt the same failed tool call again.`;
+        }
+
+        injectSystemMessage(successGuidance);
+
+        if (debugShowToolResults) {
+          yield { type: ProtocolEventTypes.CHUNK, content: `\n\n**System Notice**: ${successGuidance}\n\n` };
+        }
+        
+        result.executed = true;
+
+        // NEW: Increment search count
+        if (fnName === 'FileSystemTool_search_files') {
+          state.searchExecutionCount++;
+        }
       }
-    }
-
-    // Increment search execution count if applicable
-    if (isSearch) {
-      state.searchExecutionCount++;
-    }
-
-    // Tool execution attempted, consider it executed regardless of results
-    result.executed = true;
-
-    // Process tool result if any
-    if (toolResults.length > 0) {
-      const toolResult = toolResults[0];
-      
-      // Format tool result for injection
-      const toolLabel = toolResult.toolName || 'tool';
-      const payload = toolResult.success
-        ? { ok: true, result: toolResult.result }
-        : {
-            ok: false,
-            error: toolResult.error || 'Unknown tool error',
-            details: toolResult.details || null
-          };
-
-      const resultJson = JSON.stringify(payload, null, 2);
-      const boxed = this._formatToolResultBox(toolLabel, resultJson);
-      
-      // Inject as system message
-      injectSystemMessage(boxed);
-      
-      // Emit to stream only if debug mode is enabled
-      if (debugShowToolResults) {
-        yield { type: ProtocolEventTypes.CHUNK, content: `\n\n${boxed}\n\n` };
-      }
-    }
 
     return result;
   }
@@ -498,8 +378,7 @@ class TwoStageProtocol extends ProtocolStrategy {
    * @private
    */
   async *_callAdapter(messages, executionContext) {
-    const { projectId, requestId, mode } = executionContext;
-    const adapter = this.adapter;
+    const { adapter, projectId, requestId, mode } = executionContext;
 
     const safeMessages = messages
       .filter(m => m && typeof m === 'object' && typeof m.role === 'string' && typeof m.content === 'string')
@@ -636,8 +515,60 @@ class TwoStageProtocol extends ProtocolStrategy {
 
     try {
       const params = JSON.parse(fn.arguments || '{}');
-      const toolName = fn.name.split('_')[0] || 'UnknownTool';
-      const action = fn.name.split('_').slice(1).join('_') || 'unknown';
+      const name = fn.name; // e.g. "FileSystemTool_write_to_file"
+
+      // 1) Write: path-only
+      if (name === 'FileSystemTool_write_to_file' && params.path) {
+        return ToolRunner.buildCanonicalSignature(
+          'FileSystemTool',
+          'write_to_file',
+          { path: params.path },
+          projectId,
+        );
+      }
+
+      // 2) Read: path-only
+      if (name === 'FileSystemTool_read_file' && params.path) {
+        return ToolRunner.buildCanonicalSignature(
+          'FileSystemTool',
+          'read_file',
+          { path: params.path },
+          projectId,
+        );
+      }
+
+      // 3) List: path + key options
+      if (name === 'FileSystemTool_list_files' && params.path) {
+        const sigParams = {
+          path: params.path,
+          recursive: !!params.recursive,
+          no_ignore: !!params.no_ignore,
+        };
+        return ToolRunner.buildCanonicalSignature(
+          'FileSystemTool',
+          'list_files',
+          sigParams,
+          projectId,
+        );
+      }
+
+      // 4) Search: path + regex + file_pattern
+      if (name === 'FileSystemTool_search_files' && params.path && params.regex) {
+        const sigParams = {
+          path: params.path,
+          regex: params.regex,
+          file_pattern: params.file_pattern || null,
+        };
+        return ToolRunner.buildCanonicalSignature(
+          'FileSystemTool',
+          'search_files',
+          sigParams,
+          projectId,
+        );
+      }
+
+      const toolName = name.split('_')[0] || 'UnknownTool';
+      const action = name.split('_').slice(1).join('_') || 'unknown';
       const signature = ToolRunner.buildCanonicalSignature(
         toolName,
         action,

@@ -27,7 +27,80 @@ const originalGetSubtaskFullContext =
     ? DatabaseToolInstance.get_subtask_full_context.bind(DatabaseToolInstance)
     : null;
 
+const originalDeleteSubtask =
+  DatabaseToolInstance && typeof DatabaseToolInstance.delete_subtask === 'function'
+    ? DatabaseToolInstance.delete_subtask.bind(DatabaseToolInstance)
+    : null;
+
+const originalGetFeatureOverview =
+  DatabaseToolInstance && typeof DatabaseToolInstance.get_feature_overview === 'function'
+    ? DatabaseToolInstance.get_feature_overview.bind(DatabaseToolInstance)
+    : null;
+
+const originalCreateTask =
+  DatabaseToolInstance && typeof DatabaseToolInstance.create_task === 'function'
+    ? DatabaseToolInstance.create_task.bind(DatabaseToolInstance)
+    : null;
+
 const DatabaseToolAgentAdapter = {
+  // === get_feature_overview ===
+  async get_feature_overview(args) {
+    if (!args || typeof args !== 'object') throw new Error('args must be an object');
+    const { feature_id: featureId, project_id: projectId, context } = args;
+    if (!featureId) throw new Error('feature_id is required');
+
+    const targetFn = originalGetFeatureOverview || (DatabaseToolInstance && DatabaseToolInstance.get_feature_overview);
+    if (typeof targetFn !== 'function') throw new Error('Implementation not available');
+
+    return await targetFn(featureId, projectId);
+  },
+
+  // === create_task ===
+  async create_task(args) {
+    if (!args || typeof args !== 'object') throw new Error('args must be an object');
+    // Align with functionDefinitions.js params
+    const { 
+      feature_id: featureId, 
+      external_id: externalId, 
+      title, 
+      status, 
+      basic_info, 
+      pcc, 
+      cap, 
+      reason, 
+      context 
+    } = args;
+
+    if (!featureId) throw new Error('feature_id is required');
+    if (!title) throw new Error('title is required');
+
+    const targetFn = originalCreateTask || (DatabaseToolInstance && DatabaseToolInstance.create_task);
+    if (typeof targetFn !== 'function') throw new Error('Implementation not available');
+
+    return await targetFn(
+      featureId, 
+      externalId || null, 
+      title, 
+      status || 'pending', 
+      basic_info || {}, 
+      pcc || {}, 
+      cap || {}, 
+      reason || ''
+    );
+  },
+
+  // === delete_subtask ===
+  async delete_subtask(args) {
+    if (!args || typeof args !== 'object') throw new Error('args must be an object');
+    const { subtask_id: subtaskId, reason, context } = args;
+    if (!subtaskId) throw new Error('subtask_id is required');
+
+    const targetFn = originalDeleteSubtask || (DatabaseToolInstance && DatabaseToolInstance.delete_subtask);
+    if (typeof targetFn !== 'function') throw new Error('Implementation not available');
+
+    return await targetFn(subtaskId, reason || '');
+  },
+
   async get_subtask_full_context(args) {
     // Basic shape validation so bad tool_calls fail fast and clearly.
     if (!args || typeof args !== 'object' || Array.isArray(args)) {

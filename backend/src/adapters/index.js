@@ -129,10 +129,26 @@ function getAdapterType(adapter) {
   return 'Unknown Adapter';
 }
 
+/**
+ * Create an adapter based on environment configuration.
+ * Uses ORION_MODEL_PROVIDER environment variable (defaults to deepseek).
+ * @returns {DS_ChatAdapter|GPT41Adapter} Adapter instance
+ * @throws {Error} If required API key is missing
+ */
+function createAdapter() {
+  const provider = process.env.ORION_MODEL_PROVIDER || 'deepseek';
+  if (provider === 'openai') {
+    return createGPT41AdapterFromEnv();
+  } else {
+    return createDeepSeekAdapterFromEnv();
+  }
+}
+
 module.exports = {
   LLMAdapter,
   DS_ChatAdapter,
   GPT41Adapter,
+  createAdapter,
   createDeepSeekAdapter,
   createDeepSeekAdapterFromEnv,
   createGPT41Adapter,

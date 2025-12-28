@@ -112,16 +112,40 @@ async function executeToolCall(tools, toolCall, context) {
   // already emitting centralized tool_call/tool_result events.
   const safeContext = { ...(context || {}), __trace_from_toolrunner: true };
 
-  if (!tools || !tools[tool]) {
-    throw new Error(`Tool "${tool}" not found in tool registry`);
+  // Special case: DatabaseTool is sometimes passed as a class/adapter where methods are on prototype,
+  // or as an instance. The registry might have it as `DatabaseTool: DatabaseToolAgentAdapter`.
+  // However, function definitions use names like `DatabaseTool_get_feature_overview`.
+  // The parser splits this into tool="DatabaseTool", action="get_feature_overview".
+  
+  let toolInstance = tools[tool];
+
+  if (!toolInstance) {
+     // Fallback 1: check if the tool name itself is a function in the registry (flat registry style)
+     // e.g. if registry has "DatabaseTool_get_feature_overview": function(...)
+     const fullName = `${tool}_${action}`;
+     if (tools[fullName]) {
+        toolInstance = { [action]: tools[fullName] };
+     } else {
+        // Fallback 2: Maybe the tool name in registry IS the base name (e.g. "DatabaseTool")
+        // but it's an agent adapter that has the methods on itself or its prototype
+        if (tools['DatabaseTool'] && tool === 'DatabaseTool') {
+           toolInstance = tools['DatabaseTool'];
+        } else {
+           throw new Error(`Tool "${tool}" not found in tool registry`);
+        }
+     }
   }
 
-  const toolInstance = tools[tool];
   const fn = toolInstance && typeof toolInstance[action] === 'function'
     ? toolInstance[action].bind(toolInstance)
     : null;
 
   if (!fn) {
+    // Debug info for DatabaseTool issues
+    if (tool === 'DatabaseTool') {
+       const availableMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(toolInstance));
+       throw new Error(`Tool "${tool}" action "${action}" is not callable. Available methods: ${availableMethods.join(', ')}`);
+    }
     throw new Error(`Tool "${tool}" action "${action}" is not callable`);
   }
 

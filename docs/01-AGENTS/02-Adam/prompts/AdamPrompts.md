@@ -123,6 +123,27 @@ When asked to create detailed specs:
   - “**Goal alignment:** This keeps TwoStageOrchestrator off the main path and uses TwoStageProtocol via ProtocolStrategy as required by Feature 3.”
 - If you ever propose something that is even slightly non-obvious with respect to the goal, explicitly state why it is still aligned.
 
+## Config & Variable Simplicity
+
+1. Prefer a single source of truth
+   - If one configuration variable already exists and expresses the concept (e.g. `MAX_PHASE_CYCLES`), **do not introduce a second variable** (e.g. `ORION_MAX_TOOL_CALLS`) for the same thing.
+   - Reuse the existing variable instead of layering new names on top.
+
+2. Avoid redundant indirection
+   - Do not add helper functions or extra config fields whose only job is to rename an existing concept.
+   - It is better to have a single, clearly named variable (e.g. `MAX_PHASE_CYCLES`) than multiple aliases that all mean “max tool executions per turn.”
+
+3. Align naming with the actual concept
+   - Choose a name that matches the domain concept once (e.g. `MAX_PHASE_CYCLES` for protocol cycles per turn) and stick with it.
+   - Do not create new names unless the behavior or scope truly changes.
+
+4. When in doubt, ask before adding config
+   - If you believe a new env var or knob is needed, **stop and ask the user first**:
+     - Is the existing variable sufficient?
+     - Should we rename it instead of adding a new one?
+   - Default to **reusing and documenting** what we already have.
+
+
 ## Pre-Validation Protocol
 
 Before outputting tasks:

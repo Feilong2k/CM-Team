@@ -1,4 +1,3 @@
-
 const fs = require('fs');
 const path = require('path');
 const { listFiles } = require('./list_files');
@@ -132,103 +131,6 @@ class FileSystemTool {
     });
   }
 }
-
-// Add trace logging to tool calls
-// NOTE: ToolRunner now emits centralized tool_call/tool_result trace events.
-// These per-tool wrappers are kept for non-ToolRunner call sites, but they
-// will skip logging when invoked via ToolRunner.
-const TraceService = require('../src/services/trace/TraceService');
-const { TRACE_TYPES, TRACE_SOURCES } = require('../src/services/trace/TraceEvent');
-
-const originalReadFile = FileSystemTool.prototype.read_file;
-const originalWriteToFile = FileSystemTool.prototype.write_to_file;
-
-FileSystemTool.prototype.read_file = async function(args) {
-  const { path: filePath, context } = args;
-  const projectId = context?.projectId;
-  const shouldTrace = !context?.__trace_from_toolrunner;
-
-  if (shouldTrace) {
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: TRACE_TYPES.TOOL_CALL,
-        source: TRACE_SOURCES.TOOL,
-        timestamp: new Date().toISOString(),
-        summary: 'FileSystemTool read_file call',
-        details: { filePath },
-        requestId: context?.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for read_file call:', err);
-    }
-  }
-
-  const result = await originalReadFile.call(this, args);
-
-  if (shouldTrace) {
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: TRACE_TYPES.TOOL_RESULT,
-        source: TRACE_SOURCES.TOOL,
-        timestamp: new Date().toISOString(),
-        summary: 'FileSystemTool read_file result',
-        details: { result: typeof result === 'string' ? result.slice(0, 1000) : result },
-        requestId: context?.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for read_file result:', err);
-    }
-  }
-
-  return result;
-};
-
-FileSystemTool.prototype.write_to_file = async function(args) {
-  const { path: filePath, content, context } = args;
-  const projectId = context?.projectId;
-  const shouldTrace = !context?.__trace_from_toolrunner;
-
-  if (shouldTrace) {
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: TRACE_TYPES.TOOL_CALL,
-        source: TRACE_SOURCES.TOOL,
-        timestamp: new Date().toISOString(),
-        summary: 'FileSystemTool write_to_file call',
-        details: {
-          filePath,
-          content: typeof content === 'string' ? content.slice(0, 1000) : null
-        },
-        requestId: context?.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for write_to_file call:', err);
-    }
-  }
-
-  const result = await originalWriteToFile.call(this, args);
-
-  if (shouldTrace) {
-    try {
-      await TraceService.logEvent({
-        projectId,
-        type: TRACE_TYPES.TOOL_RESULT,
-        source: TRACE_SOURCES.TOOL,
-        timestamp: new Date().toISOString(),
-        summary: 'FileSystemTool write_to_file result',
-        details: { result },
-        requestId: context?.requestId,
-      });
-    } catch (err) {
-      console.error('Trace logging failed for write_to_file result:', err);
-    }
-  }
-
-  return result;
-};
 
 const fileSystemTool = new FileSystemTool();
 module.exports = fileSystemTool;

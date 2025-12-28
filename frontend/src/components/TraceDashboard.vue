@@ -23,30 +23,35 @@
           {{ errorMessage }}
         </div>
 
-        <ul>
-          <li
-            v-for="event in events"
-            :key="event.id"
-            data-testid="trace-event-item"
-            @click="selectEvent(event.id)"
-            :class="[
-              'px-2 py-1 cursor-pointer border-b border-[#222222] hover:bg-[#1a1a1a]',
-              event.id === selectedEventId ? 'bg-[#222222]' : ''
-            ]"
-          >
-            <div
-              class="font-semibold"
-              :class="typeClass(event.type)"
+        <div v-for="group in groupedEvents" :key="group.requestId" data-testid="request-group">
+          <div class="px-2 py-1 text-[0.65rem] text-gray-500 border-b border-[#333333] bg-[#0a0a0a]">
+            Request: {{ group.requestId }}
+          </div>
+          <ul>
+            <li
+              v-for="event in group.events"
+              :key="event.id"
+              data-testid="trace-event-item"
+              @click="selectEvent(event.id)"
+              :class="[
+                'px-2 py-1 cursor-pointer border-b border-[#222222] hover:bg-[#1a1a1a]',
+                event.id === selectedEventId ? 'bg-[#222222]' : ''
+              ]"
             >
-              {{ event.type }}
-            </div>
-            <div class="text-[0.65rem] text-gray-400">{{ event.timestamp }}</div>
-            <div class="text-[0.7rem] truncate text-gray-200">{{ event.summary }}</div>
-          </li>
-          <li v-if="!loading && events.length === 0" class="px-2 py-2 text-[0.7rem] text-gray-500">
-            No trace events yet.
-          </li>
-        </ul>
+              <div
+                class="font-semibold"
+                :class="typeClass(event.type)"
+              >
+                {{ event.type }}
+              </div>
+              <div class="text-[0.65rem] text-gray-400">{{ event.timestamp }}</div>
+              <div class="text-[0.7rem] truncate text-gray-200">{{ event.summary }}</div>
+            </li>
+          </ul>
+        </div>
+        <div v-if="!loading && events.length === 0" class="px-2 py-2 text-[0.7rem] text-gray-500">
+          No trace events yet.
+        </div>
 
         <div v-if="loading" class="px-2 py-2 text-[0.7rem] text-gray-400">
           Loading trace logs...
@@ -67,10 +72,61 @@
         <div class="mb-1">Source: <span class="font-mono">{{ selectedEvent.source }}</span></div>
         <div class="mb-1">Summary: <span class="font-mono">{{ selectedEvent.summary }}</span></div>
 
-        <h4 class="mt-3 mb-1 font-semibold text-neon-blue">Details & Metadata</h4>
-        <pre class="bg-[#050505] border border-[#333333] rounded p-2 whitespace-pre-wrap text-[0.75rem] overflow-x-auto">
-{{ formattedDetails }}
-        </pre>
+        <!-- Textual Details -->
+        <div v-for="field in textualFields" :key="field.key" class="mt-3">
+          <h4 class="mb-1 font-semibold text-neon-blue">{{ field.label }}</h4>
+          <div class="bg-[#050505] border border-[#333333] rounded p-2 text-[0.75rem] overflow-x-auto">
+            <div v-if="field.isLong && !field.expanded" v-html="renderMarkdown(firstFiveLines(field.content))"></div>
+            <div v-else v-html="renderMarkdown(field.content)"></div>
+            <button
+              v-if="field.isLong"
+              :data-testid="field.key === 'content' ? (field.expanded ? 'show-less-button' : 'show-more-button') : 'prompt-context-show-more'"
+              class="mt-2 px-2 py-1 text-[0.7rem] rounded bg-[#111111] border border-[#444444] hover:bg-[#1a1a1a] text-white"
+              @click="field.key === 'content' ? toggleDetailsExpansion() : togglePromptContextExpansion()"
+            >
+              {{ field.expanded ? 'Show less' : 'Show more' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Other Details & Metadata -->
+        <div v-if="hasOtherDetails" class="mt-3">
+          <h4 class="mb-1 font-semibold text-neon-blue">Other Details & Metadata</h4>
+          <pre class="bg-[#050505] border border-[#333333] rounded p-2 whitespace-pre-wrap text-[0.75rem] overflow-x-auto">
+{{ JSON.stringify({ details: otherDetails, metadata: selectedEvent.metadata }, null, 2) }}
+          </pre>
+        </div>
+
+        <!-- Prompt Context (structured) -->
+        <div v-if="selectedEvent?.details?.systemPrompt || selectedEvent?.details?.messages" class="mt-3">
+          <h4 class="mb-1 font-semibold text-neon-blue">Prompt Context</h4>
+          <div class="bg-[#050505] border border-[#333333] rounded p-2 text-[0.75rem] overflow-x-auto">
+            <!-- System Prompt -->
+            <div v-if="selectedEvent.details.systemPrompt">
+              <div class="font-semibold text-neon-blue mb-1">System Prompt</div>
+              <div v-if="isContentLong(selectedEvent.details.systemPrompt) && !promptContextExpanded" v-html="renderMarkdown(firstFiveLines(selectedEvent.details.systemPrompt))"></div>
+              <div v-else v-html="renderMarkdown(selectedEvent.details.systemPrompt)"></div>
+            </div>
+            <!-- Messages -->
+            <div v-if="selectedEvent.details.messages && selectedEvent.details.messages.length" class="mt-2">
+              <div class="font-semibold text-neon-blue mb-1">Messages</div>
+              <div v-for="(msg, idx) in selectedEvent.details.messages" :key="idx" class="mb-2">
+                <div class="font-mono text-gray-400">{{ msg.role }}:</div>
+                <div v-if="isContentLong(msg.content) && !promptContextExpanded" v-html="renderMarkdown(firstFiveLines(msg.content))"></div>
+                <div v-else v-html="renderMarkdown(msg.content)"></div>
+              </div>
+            </div>
+            <!-- Show more/less button for prompt context -->
+            <button
+              v-if="isPromptContextLong"
+              data-testid="prompt-context-show-more"
+              class="mt-2 px-2 py-1 text-[0.7rem] rounded bg-[#111111] border border-[#444444] hover:bg-[#1a1a1a] text-white"
+              @click="togglePromptContextExpansion"
+            >
+              {{ promptContextExpanded ? 'Show less' : 'Show more' }}
+            </button>
+          </div>
+        </div>
       </div>
       <div v-else class="h-full flex items-center justify-center text-gray-500 text-[0.75rem]">
         Select an event from the timeline to see details.
@@ -81,6 +137,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { renderMarkdown } from '@/utils/markdown'
 
 const props = defineProps({
   projectId: {
@@ -99,6 +156,26 @@ const selectedEvent = computed(() => {
   return events.value.find(e => e.id === selectedEventId.value) || null
 })
 
+const groupedEvents = computed(() => {
+  const groups = {}
+  events.value.forEach(event => {
+    const requestId = event.metadata?.requestId || 'unknown'
+    if (!groups[requestId]) {
+      groups[requestId] = {
+        requestId,
+        events: []
+      }
+    }
+    groups[requestId].events.push(event)
+  })
+  // Convert to array and sort by first event timestamp maybe
+  return Object.values(groups).sort((a, b) => {
+    const aTime = a.events[0]?.timestamp || ''
+    const bTime = b.events[0]?.timestamp || ''
+    return aTime.localeCompare(bTime)
+  })
+})
+
 const formattedDetails = computed(() => {
   if (!selectedEvent.value) return ''
   const payload = {
@@ -111,6 +188,116 @@ const formattedDetails = computed(() => {
     return String(payload)
   }
 })
+
+const formattedPromptContext = computed(() => {
+  if (!selectedEvent.value || !selectedEvent.value.details) return ''
+  const { systemPrompt, messages } = selectedEvent.value.details
+  if (!systemPrompt && !messages) return ''
+
+  const payload = {
+    systemPrompt: systemPrompt || null,
+    messages: Array.isArray(messages) ? messages : null,
+  }
+
+  try {
+    return JSON.stringify(payload, null, 2)
+  } catch (e) {
+    return String(payload)
+  }
+})
+
+// Expansion states
+const detailsExpanded = ref(false)
+const promptContextExpanded = ref(false)
+
+// Helper to count lines in text
+const countLines = (text) => {
+  if (!text) return 0
+  return text.split('\n').length
+}
+
+// Determine if content is long (more than 5 lines)
+const isContentLong = (text) => countLines(text) > 5
+
+// Get first 5 lines of text
+const firstFiveLines = (text) => {
+  if (!text) return ''
+  const lines = text.split('\n')
+  return lines.slice(0, 5).join('\n')
+}
+
+// Rendered markdown for system prompt
+const renderedSystemPrompt = computed(() => {
+  if (!selectedEvent.value?.details?.systemPrompt) return ''
+  return renderMarkdown(selectedEvent.value.details.systemPrompt)
+})
+
+// Rendered markdown for content (if any)
+const renderedContent = computed(() => {
+  const content = selectedEvent.value?.details?.content
+  if (!content) return ''
+  return renderMarkdown(content)
+})
+
+// Determine if we should show snippet for details content
+const isDetailsContentLong = computed(() => {
+  const content = selectedEvent.value?.details?.content
+  return content && isContentLong(content)
+})
+
+// Determine if we should show snippet for prompt context
+const isPromptContextLong = computed(() => {
+  const systemPrompt = selectedEvent.value?.details?.systemPrompt
+  const messages = selectedEvent.value?.details?.messages
+  let totalLines = 0
+  if (systemPrompt) totalLines += countLines(systemPrompt)
+  if (Array.isArray(messages)) {
+    messages.forEach(msg => {
+      if (msg.content) totalLines += countLines(msg.content)
+    })
+  }
+  return totalLines > 5
+})
+
+// Extract textual fields from details (only content, systemPrompt is handled in prompt context)
+const textualFields = computed(() => {
+  const details = selectedEvent.value?.details
+  if (!details) return []
+  const fields = []
+  if (details.content !== undefined) {
+    fields.push({
+      label: 'Content',
+      key: 'content',
+      content: details.content,
+      isLong: isContentLong(details.content),
+      expanded: detailsExpanded.value // reuse detailsExpanded for content
+    })
+  }
+  // systemPrompt is displayed in prompt context section, not here
+  return fields
+})
+
+// Other fields (excluding textual fields)
+const otherDetails = computed(() => {
+  const details = selectedEvent.value?.details
+  if (!details) return {}
+  const { content, systemPrompt, messages, ...rest } = details
+  return rest
+})
+
+// Determine if there are other details or metadata to show
+const hasOtherDetails = computed(() => {
+  return Object.keys(otherDetails.value).length > 0 || selectedEvent.value?.metadata
+})
+
+// Toggle methods
+const toggleDetailsExpansion = () => {
+  detailsExpanded.value = !detailsExpanded.value
+}
+
+const togglePromptContextExpansion = () => {
+  promptContextExpanded.value = !promptContextExpanded.value
+}
 
 const typeClass = (type) => {
   switch (type) {

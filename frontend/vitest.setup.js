@@ -1,6 +1,8 @@
 // Vitest setup file to provide DOM globals when jsdom environment fails
 import { JSDOM } from 'jsdom'
 
+console.log('Vitest setup executing...')
+
 const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
   url: 'http://localhost',
   pretendToBeVisual: true,
@@ -43,3 +45,5 @@ global.matchMedia = () => ({
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {}
 }
+
+console.log('Global document defined?', !!global.document)

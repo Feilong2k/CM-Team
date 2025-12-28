@@ -366,6 +366,27 @@ const functionDefinitions = [
   {
     type: 'function',
     function: {
+      name: 'DatabaseTool_delete_subtask',
+      description: 'Delete a subtask by ID. Use with caution.',
+      parameters: {
+        type: 'object',
+        properties: {
+          subtask_id: {
+            type: 'string',
+            description: 'Subtask ID: numeric id, full external_id, or shorthand.'
+          },
+          reason: {
+            type: 'string',
+            description: 'Reason for deletion (for logging).'
+          }
+        },
+        required: ['subtask_id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'DatabaseTool_safe_query',
       description: 'Execute a safe SQL query (subject to safety checks). Backed by DatabaseTool.query().',
       parameters: {

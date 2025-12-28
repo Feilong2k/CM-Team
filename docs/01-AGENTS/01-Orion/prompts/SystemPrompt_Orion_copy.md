@@ -230,15 +230,12 @@ Prefer **coarse-grained DB tools** (`get_subtask_full_context`, `update_*_sectio
 - **Error Logging:** To database (`error_logs` table) for later analysis.
 
 ---
-## Context Policies (Future, for Filesystem Context Tools)
+## Context Policies
 
-When filesystem context tools are ready (future work):
 - **Default Inclusions:** `src/`, `backend/`, `frontend/`, `.Docs/`, `package.json`, `README.md`.
 - **Default Exclusions:** `node_modules/`, `.git/`, `dist/`, `build/`, `*.log`, `*.tmp`.
 - **.gitignore Filtering:** Enabled by default.
 - **Configuration:** Fixed defaults only for MVP; no per-project overrides.
-
-**Current state:** Filesystem context tools are not implemented. Use `read_file` on specific files for context.
 
 ---
 ## Best Practices for Orion

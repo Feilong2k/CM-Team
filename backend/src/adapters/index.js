@@ -5,6 +5,7 @@
 
 const LLMAdapter = require('./LLMAdapter');
 const DS_ChatAdapter = require('./DS_ChatAdapter');
+const DS_ReasonerAdapter = require('./DS_ReasonerAdapter');
 const GPT41Adapter = require('./GPT41Adapter');
 
 /**
@@ -22,21 +23,36 @@ function validateDeepSeekConfig() {
 }
 
 /**
- * Create a DeepSeek adapter from environment variables.
+ * Create a DeepSeek Reasoner adapter from environment variables.
  * Uses DEEPSEEK_API_KEY from environment.
  * @param {Object} [options] - Additional options
- * @param {string} [options.model] - Model to use
- * @param {string} [options.baseURL] - API base URL
- * @param {number} [options.timeout] - Request timeout
- * @param {number} [options.maxRetries] - Maximum retries
- * @returns {DS_ChatAdapter} Configured adapter instance
+ * @param {string} [options.model] - Model to use (default: deepseek-reasoner)
+ * @returns {DS_ReasonerAdapter} Configured adapter instance
  * @throws {Error} If DEEPSEEK_API_KEY is not set
  */
-function createDeepSeekAdapterFromEnv(options = {}) {
+function createDeepSeekReasonerAdapterFromEnv(options = {}) {
   validateDeepSeekConfig();
 
   const config = {
     apiKey: process.env.DEEPSEEK_API_KEY.trim(),
+    model: 'deepseek-reasoner',
+    ...options,
+  };
+
+  return new DS_ReasonerAdapter(config);
+}
+
+/**
+ * Create a DeepSeek Chat adapter from environment variables.
+ * @param {Object} [options] - Additional options
+ * @returns {DS_ChatAdapter} Configured adapter instance
+ */
+function createDeepSeekChatAdapterFromEnv(options = {}) {
+  validateDeepSeekConfig();
+
+  const config = {
+    apiKey: process.env.DEEPSEEK_API_KEY.trim(),
+    model: 'deepseek-chat',
     ...options,
   };
 
@@ -44,13 +60,22 @@ function createDeepSeekAdapterFromEnv(options = {}) {
 }
 
 /**
+ * Legacy/Default create method for DeepSeek (defaults to Chat for now unless updated).
+ * DEPRECATED: Prefer createDeepSeekReasonerAdapterFromEnv or createDeepSeekChatAdapterFromEnv.
+ */
+function createDeepSeekAdapterFromEnv(options = {}) {
+  // For backwards compatibility or default usage, we can point this to Reasoner if desired,
+  // but let's point it to Chat to avoid breaking legacy assumptions, 
+  // or point to Reasoner if that's the new mandate.
+  // Given MVP goal is Reasoner, let's make this return ReasonerAdapter if no model specified?
+  // Actually, safe to keep as ChatAdapter for explicit legacy calls, 
+  // and update createAdapter() to choose Reasoner.
+  return createDeepSeekChatAdapterFromEnv(options);
+}
+
+/**
  * Create a DeepSeek chat adapter with configuration.
  * @param {Object} config - Configuration object
- * @param {string} config.apiKey - DeepSeek API key (required)
- * @param {string} [config.model] - Model to use (default: 'deepseek-chat')
- * @param {string} [config.baseURL] - API base URL (default: 'https://api.deepseek.com')
- * @param {number} [config.timeout] - Request timeout in milliseconds (default: 30000)
- * @param {number} [config.maxRetries] - Maximum retries (default: 3)
  * @returns {DS_ChatAdapter} Configured DeepSeek adapter instance
  */
 function createDeepSeekAdapter(config) {
@@ -132,16 +157,28 @@ function getAdapterType(adapter) {
 /**
  * Create an adapter based on environment configuration.
  * Uses ORION_MODEL_PROVIDER environment variable (defaults to deepseek).
- * @returns {DS_ChatAdapter|GPT41Adapter} Adapter instance
+ * @returns {DS_ReasonerAdapter|DS_ChatAdapter|GPT41Adapter} Adapter instance
  * @throws {Error} If required API key is missing
  */
 function createAdapter() {
-  const provider = process.env.ORION_MODEL_PROVIDER || 'deepseek';
+  const provider = (process.env.ORION_MODEL_PROVIDER || 'deepseek').toLowerCase();
+  
   if (provider === 'openai') {
     return createGPT41AdapterFromEnv();
-  } else {
-    return createDeepSeekAdapterFromEnv();
+  } 
+  
+  if (provider === 'deepseek' || provider === 'deepseekreasoner') {
+    // Default "deepseek" now maps to Reasoner for MVP
+    return createDeepSeekReasonerAdapterFromEnv();
   }
+
+  if (provider === 'deepseekchat') {
+    // Explicit opt-in for standard chat model
+    return createDeepSeekChatAdapterFromEnv();
+  }
+
+  // Fallback default
+  return createDeepSeekReasonerAdapterFromEnv();
 }
 
 module.exports = {

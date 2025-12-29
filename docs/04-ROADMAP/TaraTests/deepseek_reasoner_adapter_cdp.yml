@@ -1,0 +1,189 @@
+# CDP Analysis: DeepSeek Reasoner Adapter & Trace Integration
+# Analyst: Tara
+# Date: 2025-12-28
+# Task: Design failing tests for DS_ReasonerAdapter as primary DeepSeek adapter, response shape, streaming reasoning, and trace persistence
+
+## A. Atomic Actions
+
+### 1. Adapter Factory Selection (`backend/src/adapters/index.js`)
+- **Behavior**: `createAdapter()` selects appropriate adapter based on `ORION_MODEL_PROVIDER`
+- **Expected Outcome**: 
+  - `ORION_MODEL_PROVIDER=DeepSeek` or `DeepSeekReasoner` → `DS_ReasonerAdapter`
+  - `ORION_MODEL_PROVIDER=DeepSeekChat` → `DS_ChatAdapter`
+  - `ORION_MODEL_PROVIDER=OpenAI` → `GPT41Adapter`
+- **Risk Level**: High (wrong adapter breaks Orion's LLM functionality)
+- **Observable Side Effects**: Instance type, adapter methods
+
+### 2. Adapter Response Shape Parsing
+- **Behavior**: `DS_ReasonerAdapter.parseResponse()` extracts `content`, `toolCalls`, `reasoningContent`
+- **Expected Outcome**: 
+  - Non-streaming responses return `{ content, toolCalls, reasoningContent }`
+  - Missing `reasoning_content` → `reasoningContent: null`
+- **Risk Level**: High (downstream agents depend on shape)
+- **Observable Side Effects**: Returned object structure
+
+### 3. Streaming Reasoning Behavior
+- **Behavior**: `sendMessagesStreaming()` yields reasoning chunks, content chunks, tool calls, and final event
+- **Expected Outcome**: 
+  - Yields `{ reasoningChunk }`, `{ chunk }`, `{ toolCalls }`, `{ done: true, fullContent, fullReasoning }`
+  - Duplicate consecutive deltas are suppressed
+- **Risk Level**: Medium (streaming correctness for trace and UI)
+- **Observable Side Effects**: Stream events, accumulated content
+
+### 4. Reasoning Persistence in Trace
+- **Behavior**: Reasoner's `reasoning_content` stored in `trace_events.details.reasoning`
+- **Expected Outcome**: Trace events contain reasoning text when using Reasoner adapter
+- **Risk Level**: High (trace dashboard must show thinking)
+- **Observable Side Effects**: Database row in `trace_events` with `details.reasoning`
+
+### 5. Error Handling
+- **Behavior**: Missing API keys, invalid responses, network errors
+- **Expected Outcome**: Clear, descriptive errors thrown (no silent failures)
+- **Risk Level**: Medium (user experience, debugging)
+- **Observable Side Effects**: Error messages, exception types
+
+### 6. Temperature/Mode Sanity
+- **Behavior**: Adapter receives `temperature` from Orion agent (not hardcoded)
+- **Expected Outcome**: Adapter uses provided temperature (defaults for PLAN/ACT modes set by agent)
+- **Risk Level**: Low (functional but important for protocol)
+- **Observable Side Effects**: API call body includes correct temperature
+
+## B. Resources Touched
+
+### 1. DeepSeek API
+- **Resource Type**: External HTTP API
+- **Access Pattern**: POST /chat/completions with streaming
+- **Isolation Risks**: API rate limits, network failures
+
+### 2. Environment Variables
+- **Resource Type**: Configuration
+- **Access Pattern**: Read `ORION_MODEL_PROVIDER`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`
+- **Isolation Risks**: Missing keys, wrong provider values
+
+### 3. Trace Database (`trace_events`)
+- **Resource Type**: PostgreSQL table
+- **Access Pattern**: Insert via `TraceService.logEvent`
+- **Isolation Risks**: Schema mismatch, missing `reasoning` field
+
+### 4. Adapter Instance State
+- **Resource Type**: Memory
+- **Access Pattern**: Configuration (apiKey, model, baseURL)
+- **Isolation Risks**: Incorrect configuration leads to API errors
+
+## C. System Physics
+
+### 1. Network Latency & Timeouts
+- **Physical Limits**: DeepSeek API response times, especially for reasoning
+- **Failure Modes**: Timeout, partial streaming interruptions
+- **Mitigations**: Retry logic, longer timeout for reasoning
+
+### 2. Stream Deduplication
+- **Physical Limits**: Consecutive identical deltas from API
+- **Failure Modes**: Duplicate chunks in UI/trace
+- **Mitigations**: In‑memory comparison of last delta
+
+### 3. Database Write Performance
+- **Physical Limits**: Concurrent trace inserts
+- **Failure Modes**: Slow inserts block request handling
+- **Mitigations**: Async logging, fire‑and‑forget (if implemented)
+
+## Test Seam Validation
+
+### Clear Seams Exist:
+1. **Adapter Factory ↔ Environment**: Reads `process.env.ORION_MODEL_PROVIDER`
+2. **Adapter ↔ DeepSeek API**: Mockable HTTP calls (fetch)
+3. **Adapter ↔ TraceService**: Adapter yields reasoning chunks; agent/logging layer writes to trace
+4. **TraceService ↔ Database**: Direct PostgreSQL queries
+
+### Observable Side Effects:
+1. **Adapter instance type** (verifiable via `instanceof`)
+2. **HTTP call parameters** (verifiable via mock fetch)
+3. **Streamed events** (verifiable via async iteration)
+4. **Database rows** (verifiable via test DB query)
+
+### No Hidden Logic:
+- Adapter must not hardcode temperature; must accept from options.
+- Factory must not fall back to wrong adapter silently.
+- Trace persistence must not be optional or config‑off.
+
+## Blocking Conditions
+
+### Would Block If:
+1. **Missing environment variable handling** (cannot test provider selection)
+2. **Adapter methods not mockable** (e.g., fetch not replaceable)
+3. **TraceService cannot be instantiated** in tests
+4. **No test database** for trace persistence tests
+
+### Current Status: ✅ Seams clear, dependencies mockable.
+
+## Implementation Risks
+
+### 1. Placeholder Adapter Selection
+- **Risk**: Factory returns any adapter regardless of env var (e.g., always DS_ChatAdapter)
+- **Mitigation**: Tests verify exact mapping.
+
+### 2. Hardcoded Response Shape
+- **Risk**: `parseResponse` returns static object, ignoring API response
+- **Mitigation**: Tests use varied mock API responses.
+
+### 3. Missing Reasoning in Trace
+- **Risk**: Trace events lack `details.reasoning` even when reasoningContent present
+- **Mitigation**: Integration test verifies DB field populated.
+
+### 4. Streaming Duplicates
+- **Risk**: Duplicate deltas not filtered, causing UI/trace duplication
+- **Mitigation**: Tests supply repeated deltas and assert suppression.
+
+### 5. Temperature Hardcoded
+- **Risk**: Adapter ignores `temperature` option, always uses 0.0
+- **Mitigation**: Tests verify API call body includes passed temperature.
+
+## Test Scenario Derivation
+
+### Critical Priority (Must Test)
+1. **Factory Selection** – Ensures correct adapter used in production.
+2. **Response Shape** – Ensures agent receives consistent interface.
+3. **Reasoning Persistence** – Ensures trace dashboard shows thinking.
+
+### High Priority (Should Test)
+4. **Streaming Behavior** – Ensures real‑time updates work.
+5. **Error Handling** – Ensures graceful failures.
+
+### Medium Priority (Could Test)
+6. **Temperature Propagation** – Ensures protocol modes work.
+
+## Success Criteria
+
+### Tests Must Fail When:
+1. Factory returns wrong adapter for given `ORION_MODEL_PROVIDER`
+2. `parseResponse` does not extract `reasoningContent` from API response
+3. Streaming yields duplicate consecutive deltas
+4. Trace events lack `details.reasoning` when Reasoner used
+5. Missing API key does not throw clear error
+6. Adapter hardcodes temperature ignoring options
+
+### Tests Must Pass When:
+1. Factory returns correct adapter instances
+2. Response shape matches `{ content, toolCalls, reasoningContent }`
+3. Streaming yields unique deltas and final event
+4. Trace events contain reasoning text
+5. Errors are descriptive and thrown appropriately
+6. Temperature is passed through to API call
+
+## Verification Script
+
+```bash
+# Run adapter & trace integration tests (should fail in RED phase)
+cd backend && npx jest src/_test_/adapters/DS_ReasonerAdapter.spec.js
+cd backend && npx jest src/_test_/adapters/index.spec.js
+cd backend && npx jest src/_test_/integration/reasoning_trace.spec.js
+
+# Expected: All tests fail (RED phase)
+# After implementation: All tests pass (GREEN phase)
+```
+
+## Notes
+- This CDP assumes the TraceService is already implemented and tested (per trace_system_cdp.yml).
+- The integration test for reasoning persistence will require a test database with `trace_events` table.
+- Mocking DeepSeek API responses must simulate both success and error cases.
+- Ensure tests are independent and can run without external network calls.

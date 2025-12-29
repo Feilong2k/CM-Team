@@ -1,5 +1,5 @@
 require('dotenv').config({ path: '../../.env' });
-const DS_ChatAdapter = require('../../src/adapters/DS_ChatAdapter');
+const DS_ReasonerAdapter = require('../../src/adapters/DS_ReasonerAdapter');
 const ToolRunner = require('../../tools/ToolRunner');
 const registry = require('../../tools/registry');
 
@@ -23,9 +23,11 @@ async function runProbe(probeName, systemPrompt, tools, userMessage, options = {
   }
 
   // Configure adapter with deepseek-reasoner model (supports reasoning_content)
-  const adapter = new DS_ChatAdapter({ 
+  // Use the dedicated DS_ReasonerAdapter so behavior matches the
+  // production adapter wiring while preserving the probe's semantics.
+  const adapter = new DS_ReasonerAdapter({ 
     apiKey,
-    model: 'deepseek-reasoner' // Use R1/Reasoner model
+    model: 'deepseek-reasoner', // explicit, though this is the default
   });
   // registry.getTools() returns the map { FileSystemTool: ..., DatabaseTool: ... }
   // If options.toolRegistry is provided, use it; otherwise use default Orion tools

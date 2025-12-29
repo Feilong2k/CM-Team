@@ -88,7 +88,8 @@ class TwoStageProtocol extends ProtocolStrategy {
       searchExecutionCount: 0,
       currentMessages: [...executionContext.messages],
       doneEmitted: false,
-      finalContent: ''
+      finalContent: '',
+      finalReasoning: ''
     };
 
     // Helper to inject system message
@@ -149,6 +150,21 @@ class TwoStageProtocol extends ProtocolStrategy {
         yield { type: ProtocolEventTypes.DONE, fullContent: actionPhaseResult.fullContent };
         state.doneEmitted = true;
         state.finalContent = actionPhaseResult.fullContent;
+        state.finalReasoning = actionPhaseResult.fullReasoning || '';
+        
+        // Log orion_response trace event with reasoning
+        await this._logTrace(traceService, {
+          projectId: executionContext.projectId,
+          requestId: executionContext.requestId,
+          source: 'orion',
+          type: 'orion_response',
+          summary: 'Orion response',
+          details: {
+            content: actionPhaseResult.fullContent,
+            reasoning: actionPhaseResult.fullReasoning || null,
+            mode: executionContext.mode
+          }
+        });
         break;
       }
 
@@ -298,7 +314,8 @@ class TwoStageProtocol extends ProtocolStrategy {
     const result = {
       toolCalls: [],
       done: false,
-      fullContent: ''
+      fullContent: '',
+      fullReasoning: ''
     };
 
     // Call adapter with current messages
@@ -370,6 +387,7 @@ class TwoStageProtocol extends ProtocolStrategy {
     if (pendingDoneEvent) {
       result.done = true;
       result.fullContent = pendingDoneEvent.fullContent || result.fullContent;
+      result.fullReasoning = pendingDoneEvent.fullReasoning || '';
     }
 
     return result;
@@ -498,30 +516,60 @@ class TwoStageProtocol extends ProtocolStrategy {
    * @private
    */
   async *_callAdapter(messages, executionContext) {
-    const { projectId, requestId, mode } = executionContext;
+    const { projectId, requestId, mode, temperature } = executionContext;
     const adapter = this.adapter;
+    const traceService = this.traceService;
 
     const safeMessages = messages
       .filter(m => m && typeof m === 'object' && typeof m.role === 'string' && typeof m.content === 'string')
       .map(m => ({ role: m.role, content: m.content }));
 
+    // Use temperature from context if provided, otherwise fallback to old defaults
+    const resolvedTemperature = (temperature !== undefined) ? temperature : (mode === 'plan' ? 0.7 : 0.3);
+
     const adapterStream = adapter.sendMessagesStreaming(safeMessages, {
-      temperature: mode === 'plan' ? 0.7 : 0.3,
+      temperature: resolvedTemperature,
       max_tokens: 8192,
       tools: functionDefinitions,
       context: { projectId, requestId },
     });
 
+    let fullContent = '';
+    let fullReasoning = '';
+
     for await (const event of adapterStream) {
       // Convert adapter events to ProtocolEvent format
-      if (event.chunk) {
+      if (event.reasoningChunk) {
+        // Accumulate reasoning chunks for trace logging
+        fullReasoning += event.reasoningChunk;
+      } else if (event.chunk) {
+        fullContent += event.chunk;
         yield { type: ProtocolEventTypes.CHUNK, content: event.chunk };
       } else if (event.toolCalls) {
         yield { type: ProtocolEventTypes.TOOL_CALLS, calls: event.toolCalls };
       } else if (event.done) {
-        yield { type: ProtocolEventTypes.DONE, fullContent: event.fullContent || '' };
+        // Capture final content and reasoning from the done event if provided
+        fullContent = event.fullContent || fullContent;
+        fullReasoning = event.fullReasoning || fullReasoning;
       }
     }
+
+    // Log llm_call trace event with reasoning (if any)
+    await this._logTrace(traceService, {
+      projectId,
+      requestId,
+      source: 'orion',
+      type: 'llm_call',
+      summary: `LLM call in ${mode} mode`,
+      details: {
+        content: fullContent,
+        reasoning: fullReasoning || null,
+        mode,
+        tools_used: safeMessages.some(m => m.role === 'tool') ? true : false
+      }
+    });
+
+    yield { type: ProtocolEventTypes.DONE, fullContent, fullReasoning };
   }
 
   /**

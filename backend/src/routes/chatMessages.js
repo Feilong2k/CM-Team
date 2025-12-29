@@ -5,6 +5,7 @@ const { getInstance: getTraceService } = require('../services/trace/TraceService
 const { getTools } = require('../../tools/registry');
 const OrionAgentV2 = require('../agents/OrionAgentV2');
 const TwoStageProtocol = require('../agents/protocols/TwoStageProtocol');
+const StandardProtocol = require('../agents/protocols/StandardProtocol');
 const { query } = require('../db/connection');
 
 /**
@@ -64,7 +65,19 @@ function createChatMessagesRouter() {
       adapter = createAdapter();
       tools = getTools();
       traceService = getTraceService();
-      protocol = new TwoStageProtocol({ adapter, tools, traceService });
+      
+      // Determine which protocol to use based on TWO_STAGE_ENABLED environment variable
+      const twoStageEnabledRaw = process.env.TWO_STAGE_ENABLED;
+      const twoStageEnabled = typeof twoStageEnabledRaw === 'string'
+        ? twoStageEnabledRaw.toLowerCase() === 'true'
+        : false;
+
+      if (twoStageEnabled) {
+        protocol = new TwoStageProtocol({ adapter, tools, traceService });
+      } else {
+        protocol = new StandardProtocol({ adapter, tools, traceService });
+      }
+      
       agent = new OrionAgentV2({ adapter, tools, traceService, protocol });
     } catch (error) {
       console.error('Failed to initialize dependencies:', error);

@@ -1,0 +1,42 @@
+{
+  "subtask": "Refactor the 'TraceService.js' file to add a new method 'getRecentErrors(limit)' that returns the last N error events.",
+  "steps": [
+    {
+      "id": "step1",
+      "description": "Analyze TraceService.js and design the new method: decide signature, error filtering criteria (error IS NOT NULL or type = 'system_error'), ordering, limit handling, and update module exports.",
+      "context_files": ["backend/src/services/trace/TraceService.js"],
+      "acceptance_criteria": [
+        "Plan documented in comments within TraceService.js",
+        "Method signature defined: getRecentErrors(projectId, limit) or getRecentErrors(limit) if projectId can be omitted",
+        "Determine whether to filter by error IS NOT NULL, type = 'system_error', or both",
+        "Update getInstance() to include new method",
+        "Update module.exports"
+      ]
+    },
+    {
+      "id": "step2",
+      "description": "Implement getRecentErrors method with SQL query, parameter binding, column mapping, and error handling.",
+      "context_files": ["backend/src/services/trace/TraceService.js"],
+      "acceptance_criteria": [
+        "Method added to TraceService.js with proper JSDoc",
+        "SQL query selects events where error IS NOT NULL (or type = 'system_error') and projectId matches",
+        "Results ordered by timestamp DESC (most recent first)",
+        "Limit applied via SQL LIMIT",
+        "Returns array of events with camelCase mapping same as getEvents",
+        "Handle database errors appropriately"
+      ]
+    },
+    {
+      "id": "step3",
+      "description": "Verify integration by adding a simple unit test in trace_system.spec.js (or create a new test file) that exercises getRecentErrors.",
+      "context_files": ["backend/src/services/trace/TraceService.js", "backend/src/_test_/trace_system.spec.js"],
+      "acceptance_criteria": [
+        "Test added to trace_system.spec.js (or new spec) that calls getRecentErrors",
+        "Test validates that only error events are returned",
+        "Test validates ordering (most recent first)",
+        "Test validates limit works",
+        "Test passes with existing test database"
+      ]
+    }
+  ]
+}

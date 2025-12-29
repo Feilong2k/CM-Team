@@ -44,6 +44,23 @@ const compositeRegistry = { ...registry.getTools() };
 compositeRegistry['AiderTool_delegate'] = async (args) => {
   console.log(`\n*** [MOCK Aider] Delegating Step: ${args.step_id} ***`);
   console.log(`Description: ${args.step_description}`);
+  
+  // Format the Aider command for visibility/verification
+  // In a real implementation, we would write context files to a temp dir or ensure they exist.
+  // Here we assume paths are relative to repo root.
+  const filePaths = args.context_files ? args.context_files.map(f => f.path).join(' ') : '';
+  
+  // Clean message for CLI
+  const cleanMessage = args.step_description.replace(/"/g, '\\"').replace(/\n/g, ' ');
+  const criteria = args.acceptance_criteria ? args.acceptance_criteria.join('; ') : '';
+  const fullMessage = `${cleanMessage} Acceptance Criteria: ${criteria}`;
+  
+  // Updated command to match the verified configuration:
+  // aider --config .aider.conf.yml --env-file backend/.env --message "..." file1 file2
+  const aiderCommand = `aider --config .aider.conf.yml --env-file backend/.env --message "${fullMessage}" ${filePaths}`;
+  
+  console.log(`Generated Command:\n${aiderCommand}`);
+
   if (args.context_files && Array.isArray(args.context_files)) {
     console.log(`Context Files (${args.context_files.length}):`);
     args.context_files.forEach(f => {
@@ -52,7 +69,9 @@ compositeRegistry['AiderTool_delegate'] = async (args) => {
   } else {
     console.log('WARNING: No context_files provided!');
   }
-  return `Delegated step ${args.step_id} to Aider.`;
+  
+  // Return success to model so it proceeds
+  return `Delegated step ${args.step_id} to Aider. Command generated successfully.`;
 };
 
 // 4. System Prompt

@@ -25,10 +25,27 @@ class OrionAgentV2 {
    * @param {Object} [options={}] - Additional options
    * @param {'plan'|'act'} [options.mode='plan'] - Execution mode
    * @param {string} [options.requestId] - Request identifier
+   * @param {Object} [options.projectConfig] - Project-specific configuration
    * @returns {AsyncIterable} Async iterator yielding protocol events
    */
   processStreaming(projectId, userMessage, options = {}) {
-    const { mode = 'plan', requestId } = options;
+    const { mode = 'plan', requestId, projectConfig } = options;
+
+    // Temperature policy - owned by OrionAgentV2
+    let temperature;
+    if (mode === 'act') {
+      temperature = 0.0;
+    } else {
+      temperature = 1.3;
+    }
+
+    // Project-level overrides
+    if (projectConfig && projectConfig.temperature && typeof projectConfig.temperature === 'object') {
+      const overrideForMode = projectConfig.temperature[mode];
+      if (typeof overrideForMode === 'number') {
+        temperature = overrideForMode;
+      }
+    }
 
     // Build system message that includes project ID and mode
     const systemMessage = {
@@ -53,6 +70,7 @@ class OrionAgentV2 {
       adapter: this.adapter,
       tools: this.tools,
       traceService: this.traceService,
+      temperature, // Temperature policy owned by agent
       config: {
         maxPhaseCycles: 3,
         maxDuplicateAttempts: 1,
